@@ -1,19 +1,31 @@
--- WEBHOOK
+-- VanTy Engine V10
+-- Garden Horizons Tracker
+
 local WEBHOOK = "https://discord.com/api/webhooks/1479129651501731854/m74-VZ82k9tbeMgVeKagXiptZI9bRALGl558JPfLbk0NUrLc3FuWViEGuXc7BbuhC9ak"
 
 local HttpService = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
+-- request compatibility
+local req =
+syn and syn.request or
+http_request or
+request or
+(fluxus and fluxus.request)
+
+-- state
 local sendDiscord = true
+local lastWeather = ""
+local lastStockHash = ""
 
 -- GUI
 local gui = Instance.new("ScreenGui", game.CoreGui)
-gui.Name = "GardenTracker"
+gui.Name = "VanTyTracker"
 
 local frame = Instance.new("Frame", gui)
-frame.Size = UDim2.new(0,220,0,120)
-frame.Position = UDim2.new(0,20,0,100)
-frame.BackgroundColor3 = Color3.fromRGB(30,30,30)
+frame.Size = UDim2.new(0,230,0,130)
+frame.Position = UDim2.new(0,20,0,120)
+frame.BackgroundColor3 = Color3.fromRGB(25,25,25)
 
 local title = Instance.new("TextLabel", frame)
 title.Size = UDim2.new(1,0,0,30)
@@ -22,13 +34,11 @@ title.TextColor3 = Color3.new(1,1,1)
 title.BackgroundTransparency = 1
 title.TextScaled = true
 
--- STOP BUTTON
 local stopBtn = Instance.new("TextButton", frame)
 stopBtn.Size = UDim2.new(1,-20,0,30)
 stopBtn.Position = UDim2.new(0,10,0,40)
 stopBtn.Text = "Stop Send Discord"
 
--- HIDE BUTTON
 local hideBtn = Instance.new("TextButton", frame)
 hideBtn.Size = UDim2.new(1,-20,0,30)
 hideBtn.Position = UDim2.new(0,10,0,80)
@@ -43,20 +53,21 @@ hideBtn.MouseButton1Click:Connect(function()
 frame.Visible = false
 end)
 
--- gửi webhook
-local function sendEmbed(title,desc)
+-- send webhook
+local function sendEmbed(title,desc,color)
 
 if not sendDiscord then return end
+if not req then warn("Request not supported") return end
 
 local data = {
-["embeds"] = {{
-["title"] = title,
-["description"] = desc,
-["color"] = 65280
+embeds = {{
+title = title,
+description = desc,
+color = color or 65280
 }}
 }
 
-request({
+req({
 Url = WEBHOOK,
 Method = "POST",
 Headers = {["Content-Type"]="application/json"},
@@ -95,50 +106,30 @@ local Gears = {
 ["Super Sprinkler"]=true
 }
 
--- đọc stock
-local function getStock(folder,data)
+-- read stock
+local function readStock(folder,data)
 
-local result = {}
+local list = {}
 
-for _,item in pairs(folder:GetChildren()) do
+for _,v in pairs(folder:GetChildren()) do
 
-local stock = item:FindFirstChild("Stock")
+local stock = v:FindFirstChild("Stock")
 
 if stock and stock.Value > 0 then
 
-if data[item.Name] then
-table.insert(result,"• "..item.Name)
+if data[v.Name] then
+table.insert(list,"• "..v.Name)
 end
 
 end
 
 end
 
-return result
+return list
 
 end
 
--- weather
-local lastWeather = ""
-
-local function checkWeather()
-
-local weather = workspace:FindFirstChild("Weather")
-
-if weather and weather.Value ~= lastWeather then
-
-lastWeather = weather.Value
-
-sendEmbed(
-"🌦 Weather",
-"Weather xuất hiện: **"..weather.Value.."**"
-)
-
-end
-
-end
-
--- check stock
+-- stock check
 local function checkStock()
 
 local seedShop = ReplicatedStorage:FindFirstChild("SeedShop")
@@ -146,8 +137,14 @@ local gearShop = ReplicatedStorage:FindFirstChild("GearShop")
 
 if not seedShop or not gearShop then return end
 
-local seeds = getStock(seedShop,Seeds)
-local gears = getStock(gearShop,Gears)
+local seeds = readStock(seedShop,Seeds)
+local gears = readStock(gearShop,Gears)
+
+local hash = HttpService:JSONEncode(seeds)..HttpService:JSONEncode(gears)
+
+if hash ~= lastStockHash then
+
+lastStockHash = hash
 
 if #seeds > 0 then
 sendEmbed("🌱 Seed Stock",table.concat(seeds,"\n"))
@@ -159,18 +156,33 @@ end
 
 end
 
--- LOOP
-while true do
-
-local minute = os.date("*t").min
-
-if minute % 5 == 0 then
-checkStock()
-wait(60)
 end
 
+-- weather
+local function checkWeather()
+
+local weather = workspace:FindFirstChild("Weather")
+
+if weather and weather.Value ~= lastWeather then
+
+lastWeather = weather.Value
+
+sendEmbed(
+"🌦 Weather Appeared",
+"Weather hiện tại: **"..weather.Value.."**",
+16776960
+)
+
+end
+
+end
+
+-- engine loop
+while true do
+
+checkStock()
 checkWeather()
 
-wait(10)
+wait(30)
 
 end
