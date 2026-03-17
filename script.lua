@@ -106,8 +106,7 @@ local SEED_NAMES = {
 -- Whitelist tên Đồ Dùng (Gear) - Chỉ chấp nhận tên trong danh sách này
 local GEAR_NAMES = {
     "sprinkler", "watering", "trowel", "shovel", "hoe", "scythe", "basket",
-    "reverter", "favorite", "tool", "can", "gloves", "boots", "hat",
-    "fertilizer", "soil", "pot", "planter", "rake", "pitchfork"
+    "reverter", "favorite", "tool", "can", "gloves", "boots", "hat", "soil", "pot", "planter", "rake", "pitchfork"
 }
 
 -- Trả về "seed", "gear", hoặc NIL nếu không khớp whitelist
@@ -165,7 +164,7 @@ local function scanUIForStock(guiLayer)
         "harvested", "earned", "playtime", "shillings", "total", "level", "xp", 
         "balance", "owned", "shilling", "rank", "prestige", "quest", "inventory",
         "buy", "sell", "confirm", "close", "back", "next", "equip", "status", "v643",
-        "money", "cash", "gems", "claimed", "rewards"
+        "money", "cash", "gems", "claimed", "rewards", "Fertile Soil"
     }
 
     -- 1. CHẾ ĐỘ QUÉT CHUẨN (Tìm Containers có Layout)
