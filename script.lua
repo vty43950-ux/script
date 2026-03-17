@@ -1,25 +1,35 @@
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CoreGui = game:GetService("CoreGui")
 local LocalPlayer = Players.LocalPlayer
 
--- API URL
+-- API URL CỦA BẠN 
 local API_URL = "https://zenithghz.qzz.io/api/update"
 
 -------------------------------------------------------------------------------
--- GIAO DIỆN (UI) - Giữ nguyên thiết kế của bạn
+-- GIAO DIỆN (UI) THÔNG BÁO CHO NGƯỜI DÙNG
 -------------------------------------------------------------------------------
 local uiLayer = (gethui and gethui()) or CoreGui:FindFirstChild("RobloxGui") or CoreGui
+
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "GHZ_Tracker_UI"
 screenGui.ResetOnSpawn = false
-if uiLayer:FindFirstChild("GHZ_Tracker_UI") then uiLayer["GHZ_Tracker_UI"]:Destroy() end
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+-- Xóa UI cũ nếu chạy lại script nhiều lần
+if uiLayer:FindFirstChild("GHZ_Tracker_UI") then
+    uiLayer["GHZ_Tracker_UI"]:Destroy()
+end
 screenGui.Parent = uiLayer
 
 local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
 mainFrame.Size = UDim2.new(0, 250, 0, 100)
-mainFrame.Position = UDim2.new(0, 10, 0, 10)
+mainFrame.Position = UDim2.new(0, 10, 0, 10) -- Góc trên cùng bên trái
 mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+mainFrame.BorderSizePixel = 0
 mainFrame.BackgroundTransparency = 0.2
 mainFrame.Parent = screenGui
 
@@ -28,15 +38,18 @@ uiCorner.CornerRadius = UDim.new(0, 8)
 uiCorner.Parent = mainFrame
 
 local titleLabel = Instance.new("TextLabel")
+titleLabel.Name = "Title"
 titleLabel.Size = UDim2.new(1, 0, 0, 30)
+titleLabel.Position = UDim2.new(0, 0, 0, 0)
 titleLabel.BackgroundTransparency = 1
-titleLabel.Text = "🌱 GHZ Tracker v2.0 (Strict Mode)"
+titleLabel.Text = "🌱 GHZ Auto-Tracker"
 titleLabel.TextColor3 = Color3.fromRGB(150, 255, 150)
 titleLabel.Font = Enum.Font.GothamBold
 titleLabel.TextSize = 14
 titleLabel.Parent = mainFrame
 
 local statusLabel = Instance.new("TextLabel")
+statusLabel.Name = "Status"
 statusLabel.Size = UDim2.new(1, -20, 0, 25)
 statusLabel.Position = UDim2.new(0, 10, 0, 30)
 statusLabel.BackgroundTransparency = 1
@@ -44,16 +57,20 @@ statusLabel.Text = "Status: 🟡 Khởi động..."
 statusLabel.TextColor3 = Color3.fromRGB(240, 240, 240)
 statusLabel.Font = Enum.Font.GothamMedium
 statusLabel.TextSize = 12
+statusLabel.TextXAlignment = Enum.TextXAlignment.Left
 statusLabel.Parent = mainFrame
 
 local infoLabel = Instance.new("TextLabel")
+infoLabel.Name = "Info"
 infoLabel.Size = UDim2.new(1, -20, 0, 40)
 infoLabel.Position = UDim2.new(0, 10, 0, 55)
 infoLabel.BackgroundTransparency = 1
-infoLabel.Text = "Data: Chờ quét..."
+infoLabel.Text = "Data: Chưa có | Thời tiết: None"
 infoLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
 infoLabel.Font = Enum.Font.Gotham
 infoLabel.TextSize = 11
+infoLabel.TextXAlignment = Enum.TextXAlignment.Left
+infoLabel.TextYAlignment = Enum.TextYAlignment.Top
 infoLabel.Parent = mainFrame
 
 local function updateUI(statusMsg, infoMsg, color)
@@ -63,174 +80,244 @@ local function updateUI(statusMsg, infoMsg, color)
 end
 
 -------------------------------------------------------------------------------
--- LOGIC BỘ LỌC CỰC CHẶT (STRICT FILTERS)
+-- HÀM HỖ TRỢ DÒ TÌM TỰ ĐỘNG (AUTO-SCAN)
 -------------------------------------------------------------------------------
 
--- Danh sách tên hạt giống cụ thể (Bỏ từ "plant" chung chung để tránh nhầm thống kê)
+local function findTextLabelWithKeyword(parent, keyword)
+    for _, obj in pairs(parent:GetDescendants()) do
+        if obj:IsA("TextLabel") or obj:IsA("TextBox") or obj:IsA("TextButton") then
+            if obj.Text and string.match(string.lower(obj.Text), string.lower(keyword)) then
+                return obj
+            end
+        end
+    end
+    return nil
+end
+
+-- Whitelist tên Hạt Giống (Seeds)
 local SEED_NAMES = {
     "onion", "corn", "carrot", "potato", "tomato", "blueberry", "strawberry",
     "grape", "wheat", "pumpkin", "watermelon", "mushroom", "apple", "orange",
     "lemon", "cherry", "pear", "pineapple", "coconut", "mango", "peach",
     "pepper", "eggplant", "sunflower", "bamboo", "cactus", "rose", "tulip",
-    "lily", "daisy", "orchid", "lavender", "sprout", "seed pack", "dawn", "royal", "streak"
+    "lily", "daisy", "orchid", "lavender", "seed", "sprout", "plant"
 }
 
+-- Whitelist tên Đồ Dùng (Gear)
 local GEAR_NAMES = {
     "sprinkler", "watering", "trowel", "shovel", "hoe", "scythe", "basket",
-    "reverter", "tool", "can", "gloves", "boots", "hat", "planter", "rake"
+    "reverter", "favorite", "tool", "can", "gloves", "boots", "hat",
+    "fertilizer", "soil", "pot", "planter", "rake", "pitchfork"
 }
 
--- Blacklist cực mạnh để loại bỏ rác
-local GLOBAL_BLACKLIST = {
-    "harvested", "earned", "last seen", "common", "rare", "legendary", "uncommon",
-    "shillings", "balance", "total", "level", "xp", "rank", "fertile soil",
-    "statistics", "profile", "inventory", "equipped", "ago", "seen"
-}
-
-local function isBlacklisted(text)
-    local t = string.lower(text)
-    for _, word in ipairs(GLOBAL_BLACKLIST) do
-        if string.find(t, word) then return true end
-    end
-    -- Loại bỏ nếu text chứa ký tự thời gian ":" (Ví dụ 23:51:25)
-    if string.find(t, ":") then return true end
-    return false
-end
-
+-- Trả về "seed", "gear", hoặc NIL nếu không khớp whitelist
 local function guessItemCategory(itemName)
-    if isBlacklisted(itemName) then return nil end
     local name = string.lower(itemName)
     
-    -- Ưu tiên check GEAR trước để loại Fertilizer/Soil
-    for _, keyword in ipairs(GEAR_NAMES) do
-        if string.find(name, keyword) then return "gear" end
-    end
-    
+    -- [FIX 1]: Loại bỏ Fertile Soil ngay từ đầu
+    if string.find(name, "fertile soil") then return nil end
+
     for _, keyword in ipairs(SEED_NAMES) do
         if string.find(name, keyword) then return "seed" end
     end
-    
-    -- Nếu có chữ "Seed" mà không dính blacklist thì vẫn nhận
-    if string.find(name, "seed") then return "seed" end
-    
+    for _, keyword in ipairs(GEAR_NAMES) do
+        if string.find(name, keyword) then return "gear" end
+    end
     return nil
 end
 
--- Hàm lấy Stock dựa trên cấu trúc "x[Số] left" trong ảnh của bạn
-local function extractStockStrict(text)
-    if not text or isBlacklisted(text) then return nil end
-    
-    -- Pattern chuẩn trong GHZ: "x6 left" hoặc "x5"
-    local stockValue = string.match(text, "[xX]%s*(%d+)")
-    if stockValue then
-        return tonumber(stockValue)
+-- Rút trích số ra khỏi chuỗi
+local function extractNumber(text)
+    if not text then return nil end
+    local num = string.match(text, "%d+")
+    return num and tonumber(num) or nil
+end
+
+-- Kiểm tra text có phải giá tiền không
+local function isPriceOrMoney(text)
+    local t = string.lower(text)
+    if string.match(t, "%$") or string.find(t, "coin") or string.find(t, "cash")
+    or string.find(t, "gem") or string.find(t, "shilling") then
+        return true
     end
-    return nil
+    local n = tonumber(string.match(text, "^%d+$"))
+    if n and n >= 500 then return true end
+    return false
+end
+
+-- Trích xuất số NHỎ NHẤT trong một string
+local function extractSmallestNumber(text)
+    local smallest = nil
+    for n in string.gmatch(text, "%d+") do
+        local num = tonumber(n)
+        if num and num > 0 and num <= 999 then
+            if not smallest or num < smallest then
+                smallest = num
+            end
+        end
+    end
+    return smallest
 end
 
 local function scanUIForStock(guiLayer)
     local results = { seeds = {}, gear = {}, foundTracker = {} }
     
-    for _, container in pairs(guiLayer:GetDescendants()) do
-        if screenGui and container:IsDescendantOf(screenGui) then continue end
+    local blacklist = {
+        "harvested", "earned", "playtime", "shillings", "total", "level", "xp", 
+        "balance", "owned", "shilling", "rank", "prestige", "quest", "inventory",
+        "buy", "sell", "confirm", "close", "back", "next", "equip", "status", "v643",
+        "money", "cash", "gems", "claimed", "rewards"
+    }
 
-        -- Chỉ quét trong các khung có Layout (Shop Cards)
-        if (container:IsA("ScrollingFrame") or container:IsA("Frame")) and 
-           (container:FindFirstChildWhichIsA("UIGridLayout") or container:FindFirstChildWhichIsA("UIListLayout")) then
+    local function processItemUI(itemUI)
+        if not itemUI:IsA("Frame") and not itemUI:IsA("ImageLabel") and not itemUI:IsA("TextButton") then return end
+        
+        local cardLabels = {}
+        local itemImage = ""
+        local isJunkCard = false
+        local isSoldOut = false
+        
+        for _, child in pairs(itemUI:GetDescendants()) do
+            if child:IsA("TextLabel") and child.Text ~= "" and child.Visible then
+                local txt = child.Text
+                local ltxt = string.lower(txt)
+                for _, word in ipairs(blacklist) do
+                    if string.find(ltxt, word) then isJunkCard = true break end
+                end
+                if string.find(ltxt, "no stock") or string.find(ltxt, "sold out") or string.find(ltxt, "0 left") or string.find(ltxt, "0x") then 
+                    isSoldOut = true 
+                end
+                if isJunkCard or isSoldOut then break end
+                table.insert(cardLabels, txt)
+            elseif child:IsA("ImageLabel") and child.Visible and child.Image ~= "" then
+                local assetId = string.match(child.Image, "%d+")
+                if assetId and itemImage == "" then
+                    itemImage = "https://www.roblox.com/asset-thumbnail/image?assetId=" .. assetId .. "&width=420&height=420&format=png"
+                end
+            end
+        end
+        
+        if isJunkCard or isSoldOut or #cardLabels == 0 then return end
+        
+        local itemName = ""
+        local itemStock = -1
+        local isExplicitStock = false
+        
+        for _, text in ipairs(cardLabels) do
+            local lowerText = string.lower(text)
+            if not isPriceOrMoney(text) then
+                local isStockLabel = string.find(lowerText, "stock") 
+                    or string.find(lowerText, "left")
+                    or string.find(lowerText, "remain")
+                    or string.match(text, "^%d+[xX]$")
+                    or string.match(text, "^[xX]%d+$")
+                if isStockLabel then
+                    local num = extractSmallestNumber(text)
+                    if num and num > 0 then
+                        itemStock = num
+                        isExplicitStock = true
+                    end
+                end
+            end
             
-            for _, card in pairs(container:GetChildren()) do
-                if not (card:IsA("Frame") or card:IsA("ImageLabel") or card:IsA("TextButton")) then continue end
-                
-                local cardTexts = {}
-                local itemImage = ""
-                
-                -- Lấy tất cả text trong 1 ô vật phẩm
-                for _, child in pairs(card:GetDescendants()) do
-                    if child:IsA("TextLabel") and child.Visible and child.Text ~= "" then
-                        table.insert(cardTexts, child.Text)
-                    elseif child:IsA("ImageLabel") and child.Visible and child.Image ~= "" then
-                        if string.find(child.Image, "rbxassetid") or string.find(child.Image, "http") then
-                            local assetId = string.match(child.Image, "%d+")
-                            if assetId and itemImage == "" then
-                                itemImage = "https://www.roblox.com/asset-thumbnail/image?assetId=" .. assetId .. "&width=150&height=150&format=png"
+            if not isPriceOrMoney(text) then
+                local isNumberLike = tonumber(text) 
+                    or string.match(text, "^%d+[xX]$")
+                    or string.match(text, "^[xX]%s*%d+$")
+                    or string.match(text, "^[%d%s]+$")
+                local isStockTag = string.find(lowerText, "stock") or string.find(lowerText, "left")
+                if not isNumberLike and not isStockTag and string.len(text) > 2 and string.len(text) < 40 then
+                    if string.len(text) > string.len(itemName) then
+                        itemName = text
+                    end
+                end
+            end
+        end
+        
+        if not isExplicitStock then
+            for _, text in ipairs(cardLabels) do
+                if not isPriceOrMoney(text) then
+                    for n in string.gmatch(text, "%d+") do
+                        local num = tonumber(n)
+                        if num and num >= 1 and num <= 99 then
+                            if itemStock == -1 or num < itemStock then
+                                itemStock = num
+                                isExplicitStock = true
                             end
                         end
                     end
                 end
+            end
+        end
 
-                -- Bước 1: Xác định Tên và Category
-                local finalName = ""
-                local category = nil
-                for _, txt in ipairs(cardTexts) do
-                    category = guessItemCategory(txt)
-                    if category then
-                        finalName = txt
-                        break
-                    end
-                end
+        -- [FIX 2]: CHẶN STOCK 5 VÀ ITEM RÁC
+        -- Nếu itemName trống, hoặc stock bằng 5 (lỗi UI phổ biến), hoặc là Fertile Soil -> Bỏ qua
+        if itemName == "" or itemStock <= 0 or itemStock == 5 then return end
+        
+        local cat = guessItemCategory(itemName)
+        if not cat then return end 
+        
+        if not results.foundTracker[itemName] then
+            table.insert(cat == "seed" and results.seeds or results.gear, {
+                name = itemName,
+                quantity = itemStock,
+                category = cat,
+                image = itemImage
+            })
+            results.foundTracker[itemName] = true
+            return true
+        end
+    end
 
-                -- Bước 2: Xác định Stock (Chỉ lấy nếu đã có tên)
-                if finalName ~= "" and not results.foundTracker[finalName] then
-                    local finalStock = nil
-                    
-                    -- Tìm label có dạng "x10 left" hoặc tương tự
-                    for _, txt in ipairs(cardTexts) do
-                        finalStock = extractStockStrict(txt)
-                        if finalStock then break end
-                    end
-
-                    -- Chỉ chấp nhận nếu có stock rõ ràng (tránh lấy nhầm số 5 ảo)
-                    if finalStock and finalStock >= 0 then
-                        table.insert(category == "seed" and results.seeds or results.gear, {
-                            name = finalName,
-                            quantity = finalStock,
-                            category = category,
-                            image = itemImage
-                        })
-                        results.foundTracker[finalName] = true
-                    end
-                end
+    for _, container in pairs(guiLayer:GetDescendants()) do
+        if screenGui and container:IsDescendantOf(screenGui) then continue end
+        if (container:IsA("ScrollingFrame") or container:IsA("Frame")) and 
+           (container:FindFirstChildWhichIsA("UIGridLayout") or container:FindFirstChildWhichIsA("UIListLayout")) then
+            for _, itemUI in pairs(container:GetChildren()) do
+                processItemUI(itemUI)
             end
         end
     end
+    
     return results.seeds, results.gear
 end
 
 -------------------------------------------------------------------------------
--- THỜI TIẾT & GỬI DỮ LIỆU
+-- TRÍCH XUẤT DỮ LIỆU & GỬI API
 -------------------------------------------------------------------------------
-
-local function postDataToAPI()
-    local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
-    updateUI("Status: 🔍 Đang quét...", nil, Color3.fromRGB(255, 200, 100))
-    
-    local seeds, gear = scanUIForStock(PlayerGui)
-    
-    -- Quét thời tiết (Strict)
+local function getGardenHorizonsData()
+    local seeds, gear = {}, {}
     local weather = { status = "None", duration = 0 }
-    local wKeywords = {"starfall", "storm", "clear", "rain", "sunny", "meteor", "mowis", "cloudy", "windy", "snow"}
-    for _, obj in pairs(PlayerGui:GetDescendants()) do
-        if obj:IsA("TextLabel") and obj.Visible and not isBlacklisted(obj.Text) then
-            local t = string.lower(obj.Text)
-            for _, kw in ipairs(wKeywords) do
-                if string.find(t, kw) then
-                    weather.status = kw:gsub("^%l", string.upper)
-                    break
-                end
+    local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+    updateUI("Status: 🔍 Đang quét dữ liệu...", nil, Color3.fromRGB(255, 200, 100))
+    
+    pcall(function()
+        local wKeywords = {"starfall", "storm", "clear", "rain", "sunny", "meteor", "mowis", "cloudy", "windy", "snow"}
+        for _, kw in ipairs(wKeywords) do
+            local wLabel = findTextLabelWithKeyword(PlayerGui, kw)
+            if wLabel then
+                weather.status = (kw:gsub("^%l", string.upper)) 
+                weather.duration = 0 -- Rút gọn logic duration cho nhẹ
+                break
             end
         end
-    end
+        seeds, gear = scanUIForStock(PlayerGui)
+    end)
+    
+    local infoStr = string.format("Data: %d Hạt, %d Đồ\nWeather: %s", #seeds, #gear, weather.status)
+    updateUI("Status: ✅ Đã quét xong!", infoStr, Color3.fromRGB(130, 255, 130))
+    return seeds, gear, weather
+end
 
-    if #seeds == 0 and #gear == 0 then
-        updateUI("Status: ⚠️ Không thấy Shop!", "Hãy mở Merchant UI", Color3.fromRGB(255, 100, 100))
+local function postDataToAPI()
+    local seeds, gear, weather = getGardenHorizonsData()
+    if #seeds == 0 and #gear == 0 and weather.status == "None" then
+        updateUI("Status: ⚠️ Không thấy Shop!", "Mở Shop để quét data.", Color3.fromRGB(255, 100, 100))
         return 
     end
     
     local payload = {
-        seeds = seeds,
-        gear = gear,
-        weather = weather,
-        timestamp = os.time()
+        seeds = seeds, gear = gear, weather = weather, timestamp = os.time()
     }
     
     local req = (syn and syn.request) or (http and http.request) or request
@@ -243,25 +330,25 @@ local function postDataToAPI()
                 Body = HttpService:JSONEncode(payload)
             })
         end)
-        updateUI("Status: ✅ Đã cập nhật API", "Seeds: "..#seeds.." | Gears: "..#gear, Color3.fromRGB(150, 255, 150))
     end
 end
 
 -------------------------------------------------------------------------------
--- VÒNG LẶP UTC 5 PHÚT
+-- VÒNG LẶP CHÍNH (SYNC UTC 5 MINS)
 -------------------------------------------------------------------------------
 task.spawn(function()
     postDataToAPI()
     while true do
         local t = os.date("!*t")
-        local waitTime = 300 - ((t.min % 5) * 60 + t.sec)
-        for i = waitTime, 1, -1 do
+        local remaining = 300 - ((t.min % 5) * 60 + t.sec)
+        
+        for i = remaining, 1, -1 do
             local mins = math.floor(i / 60)
             local secs = i % 60
-            statusLabel.Text = string.format("Status: ⏳ Restock %02d:%02d", mins, secs)
+            updateUI(string.format("Status: ⏳ Restock trong %02d:%02d", mins, secs), nil, Color3.fromRGB(180, 180, 255))
             task.wait(1)
+            if not screenGui or not screenGui.Parent then return end
         end
         postDataToAPI()
-        task.wait(2)
     end
 end)
