@@ -4,7 +4,7 @@ local CoreGui = game:GetService("CoreGui")
 local LocalPlayer = Players.LocalPlayer
 
 -- URL API
-local API_URL = "https://zenithghz.indevs.in/api/update"
+local API_URL = "https://zenithghz.qzz.io/api/update"
 
 -------------------------------------------------------------------------------
 -- CONFIG & WHITELISTS
