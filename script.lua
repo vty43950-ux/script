@@ -125,15 +125,18 @@ end
 local function scanUIForStock(guiLayer)
     local results = { seeds = {}, gear = {}, foundTracker = {} }
     
-    -- Danh sách từ khóa bị cấm (Blacklist) để không lấy nhầm stats/HUD
+    -- Blacklist các từ khóa của HUD/Stats/UI rác
     local blacklist = {
         "harvested", "earned", "playtime", "shillings", "total", "level", "xp", 
         "balance", "owned", "shilling", "rank", "prestige", "quest", "inventory",
-        "buy", "sell", "confirm", "close", "back", "next", "equip", "status"
+        "buy", "sell", "confirm", "close", "back", "next", "equip", "status", "v643"
     }
-    
+
     -- Duyệt tìm các khung chứa (ScrollingFrame/Frame có layout)
     for _, container in pairs(guiLayer:GetDescendants()) do
+        -- SKIP CHÍNH UI CỦA SCRIPT ĐỂ KHÔNG TỰ QUÉT MÌNH
+        if screenGui and container:IsDescendantOf(screenGui) then continue end
+
         if (container:IsA("ScrollingFrame") or container:IsA("Frame")) and 
            (container:FindFirstChildWhichIsA("UIGridLayout") or container:FindFirstChildWhichIsA("UIListLayout")) then
             
@@ -141,74 +144,75 @@ local function scanUIForStock(guiLayer)
             for _, itemUI in pairs(container:GetChildren()) do
                 if itemUI:IsA("Frame") or itemUI:IsA("ImageLabel") or itemUI:IsA("TextButton") then
                     
-                    local itemName = ""
-                    local itemStock = -1
-                    local isActuallyStockText = false
+                    local cardLabels = {}
+                    local isJunkCard = false
+                    local isSoldOut = false
                     
-                    -- Lấy hết các label bên trong ô này
-                    local labels = {}
+                    -- 1. THU THẬP VÀ KIỂM TRA TOÀN BỘ CARD
                     for _, child in pairs(itemUI:GetDescendants()) do
                         if child:IsA("TextLabel") and child.Text ~= "" and child.Visible then
-                            table.insert(labels, child.Text)
+                            local txt = child.Text
+                            local ltxt = string.lower(txt)
+                            
+                            -- A. Kiểm tra Blacklist (Nếu dính 1 chữ rác -> Bỏ cả card)
+                            for _, word in ipairs(blacklist) do
+                                if string.find(ltxt, word) then isJunkCard = true break end
+                            end
+                            
+                            -- B. Kiểm tra ký tự đặc biệt (@, %)
+                            if string.find(txt, "@") or string.find(txt, "%%") then isJunkCard = true end
+                            
+                            -- C. Kiểm tra Hết hàng (NO STOCK / SOLD OUT)
+                            if string.find(ltxt, "no stock") or string.find(ltxt, "sold out") then isSoldOut = true end
+                            
+                            if isJunkCard or isSoldOut then break end
+                            table.insert(cardLabels, txt)
                         end
                     end
                     
-                    -- PHÂN TÍCH Ô ITEM
-                    if #labels >= 1 then
-                        for _, text in ipairs(labels) do
-                            local lowerText = string.lower(text)
-                            
-                            -- 1. LỌC RÁC: Bỏ qua nếu có @ (username) hoặc % (tỷ lệ)
-                            if string.find(text, "@") or string.find(text, "%%") then
-                                itemName = "" -- Đánh dấu ô này là rác
-                                break
-                            end
-                            
-                            -- 2. TÌM STOCK: Chỉ lấy nếu có chữ "Stock", "Left", hoặc "x" số
-                            if not isPriceOrMoney(text) then
-                                local num = extractNumber(text)
-                                if num then
-                                    -- Ưu tiên các text có chỉ dẫn rõ ràng là Stock
-                                    if string.find(lowerText, "stock") or string.find(lowerText, "left") or string.match(text, "^[xX]%s*%d+") or string.match(text, "%d+%s*left") then
-                                        itemStock = num
-                                        isActuallyStockText = true
-                                    elseif itemStock == -1 then
-                                        itemStock = num
-                                    end
-                                end
-                            end
-                            
-                            -- 3. TÌM TÊN: Bỏ qua blacklist
-                            local isBlacklisted = false
-                            for _, word in ipairs(blacklist) do
-                                if string.find(lowerText, word) then
-                                    isBlacklisted = true
-                                    break
-                                end
-                            end
-                            
-                            if not isBlacklisted and not isPriceOrMoney(text) and not string.find(lowerText, "stock") and not string.find(lowerText, "left") then
-                                if not tonumber(text) or string.len(text) > 5 then
-                                    if string.len(text) > string.len(itemName) and string.len(text) < 35 then
-                                        itemName = text
-                                    end
+                    -- NẾU LÀ CARD RÁC HOẶC HẾT HÀNG -> BỎ QUA NGAY
+                    if isJunkCard or isSoldOut or #cardLabels == 0 then continue end
+                    
+                    -- 2. PHÂN TÍCH DỮ LIỆU TRONG CARD HỢP LỆ
+                    local itemName = ""
+                    local itemStock = -1
+                    local isActuallyStock = false
+                    
+                    for _, text in ipairs(cardLabels) do
+                        local lowerText = string.lower(text)
+                        
+                        -- TÌM STOCK (Ưu tiên những nhãn có chữ Stock/Left hoặc có dấu x)
+                        if not isPriceOrMoney(text) then
+                            local num = extractNumber(text)
+                            if num then
+                                if string.find(lowerText, "stock") or string.find(lowerText, "left") or string.match(text, "%d+[xX]") or string.match(text, "[xX]%s*%d+") then
+                                    itemStock = num
+                                    isActuallyStock = true
+                                elseif itemStock == -1 then
+                                    itemStock = num
                                 end
                             end
                         end
                         
-                        -- KIỂM TRA CHỐT HẠ:
-                        -- - Phải có Tên hợp lệ.
-                        -- - Phải tìm thấy Stock và Stock PHẢI LỚN HƠN 0.
-                        -- - Phải có dấu hiệu là nhãn Stock thực sự (isActuallyStockText).
-                        if itemName ~= "" and itemStock > 0 and isActuallyStockText and not results.foundTracker[itemName] then
-                            local cat = guessItemCategory(itemName)
-                            table.insert(cat == "seed" and results.seeds or results.gear, {
-                                name = itemName,
-                                quantity = itemStock,
-                                category = cat
-                            })
-                            results.foundTracker[itemName] = true
+                        -- TÌM TÊN (Nhãn dài nhất không phải số/giá)
+                        if not isPriceOrMoney(text) and not string.find(lowerText, "stock") and not string.find(lowerText, "left") then
+                            if not tonumber(text) or string.len(text) > 5 then
+                                if string.len(text) > string.len(itemName) and string.len(text) < 40 then
+                                    itemName = text
+                                end
+                            end
                         end
+                    end
+                    
+                    -- 3. LƯU KẾT QUẢ
+                    if itemName ~= "" and itemStock > 0 and isActuallyStock and not results.foundTracker[itemName] then
+                        local cat = guessItemCategory(itemName)
+                        table.insert(cat == "seed" and results.seeds or results.gear, {
+                            name = itemName,
+                            quantity = itemStock,
+                            category = cat
+                        })
+                        results.foundTracker[itemName] = true
                     end
                 end
             end
@@ -325,7 +329,7 @@ local function getSecondsUntilNextRestock()
     local minutesToNext = 5 - (currentMin % 5)
     local secondsToNext = (minutesToNext * 60) - currentSec
     
-    return secondsToNext + 3
+    return secondsToNext
 end
 
 -------------------------------------------------------------------------------
