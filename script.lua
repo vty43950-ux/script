@@ -1,168 +1,174 @@
--- CONFIG
-local WEBHOOK = "https://discord.com/api/webhooks/1482391815024803963/6V8VLwhL7X1o9FL_n1GNxxsoRH6su1tDzhbxzT4wJe_qr_MGCVaqp1fUs8ZKdnbyyC_H"
-
--- SERVICES
-local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
-local player = Players.LocalPlayer
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
 
--- UI
-local gui = Instance.new("ScreenGui")
-gui.Name = "VanTyStockUI"
-gui.Parent = player:WaitForChild("PlayerGui")
+-- ⚠️ Đổi "localhost" thành IP LAN của máy tính (vd: "http://192.168.1.15:3456/api/update")
+local API_URL = "https://zenithghz.qzz.io/api/update" 
 
-local frame = Instance.new("Frame")
-frame.Parent = gui
-frame.Size = UDim2.new(0,260,0,170)
-frame.Position = UDim2.new(0.02,0,0.3,0)
-frame.BackgroundColor3 = Color3.fromRGB(25,25,25)
+local LocalPlayer = Players.LocalPlayer
 
-local title = Instance.new("TextLabel")
-title.Parent = frame
-title.Size = UDim2.new(1,0,0,30)
-title.Text = "Garden Horizons Stock"
-title.TextColor3 = Color3.new(1,1,1)
-title.BackgroundTransparency = 1
+-------------------------------------------------------------------------------
+-- HỆ THỐNG QUÉT DỮ LIỆU TỪ BỘ NHỚ GAME (KHÔNG CẦN LƯỚT GIAO DIỆN)
+-------------------------------------------------------------------------------
 
--- DRAG UI
-frame.Active = true
-frame.Draggable = true
-
--- BUTTON CLOSE
-local close = Instance.new("TextButton")
-close.Parent = frame
-close.Text = "X"
-close.Size = UDim2.new(0,30,0,30)
-close.Position = UDim2.new(1,-30,0,0)
-
--- BUTTON MINIMIZE
-local mini = Instance.new("TextButton")
-mini.Parent = frame
-mini.Text = "-"
-mini.Size = UDim2.new(0,30,0,30)
-mini.Position = UDim2.new(1,-60,0,0)
-
--- STATUS
-local status = Instance.new("TextLabel")
-status.Parent = frame
-status.Size = UDim2.new(1,0,0,30)
-status.Position = UDim2.new(0,0,0,120)
-status.Text = "Status: Ready"
-status.TextColor3 = Color3.new(1,1,1)
-status.BackgroundTransparency = 1
-
--- SEND TEST
-local testBtn = Instance.new("TextButton")
-testBtn.Parent = frame
-testBtn.Size = UDim2.new(0,220,0,30)
-testBtn.Position = UDim2.new(0,20,0,50)
-testBtn.Text = "Send Test Webhook"
-
--- FORCE SEND
-local forceBtn = Instance.new("TextButton")
-forceBtn.Parent = frame
-forceBtn.Size = UDim2.new(0,220,0,30)
-forceBtn.Position = UDim2.new(0,20,0,85)
-forceBtn.Text = "Force Send Stock"
-
--- MINIMIZED BUTTON
-local openBtn = Instance.new("TextButton")
-openBtn.Parent = gui
-openBtn.Size = UDim2.new(0,120,0,30)
-openBtn.Position = UDim2.new(0,20,0,200)
-openBtn.Text = "Open Stock UI"
-openBtn.Visible = false
-
--- FUNCTIONS
-
-local function sendWebhook(data)
-
-    status.Text = "Status: Sending..."
-
-    local payload = HttpService:JSONEncode(data)
-
-    local success,err = pcall(function()
-        HttpService:PostAsync(
-            WEBHOOK,
-            payload,
-            Enum.HttpContentType.ApplicationJson
-        )
-    end)
-
-    if success then
-        status.Text = "Status: Sent ✔"
-    else
-        status.Text = "HTTP Error"
-        warn(err)
+-- 1. Hàm quét thư mục chứa Data của Shop 
+-- (Thông thường Data Shop sẽ lưu ở ReplicatedStorage.ShopData, ReplicatedStorage.Items, Workspace...)
+local function scanFolderForItems(folder, category)
+    local items = {}
+    
+    for _, itemObj in ipairs(folder:GetChildren()) do
+        local itemName = itemObj.Name
+        local itemQuantity = 1
+        
+        -- Dữ liệu Stock (Số lượng) thường được lưu ở các biến Value như IntValue, NumberValue ...
+        -- Hoặc qua Attribute của Objejct
+        local stockValue = itemObj:FindFirstChild("Stock") or itemObj:FindFirstChild("Amount") or itemObj:FindFirstChild("Quantity")
+        
+        if stockValue and stockValue:IsA("IntValue") or stockValue:IsA("NumberValue") then
+            itemQuantity = stockValue.Value
+        else
+            -- Check Value thông qua Attribute (Tính năng mới của Roblox)
+            local attrStock = itemObj:GetAttribute("Stock") or itemObj:GetAttribute("Quantity")
+            if attrStock then
+                itemQuantity = tonumber(attrStock)
+            end
+        end
+        
+        table.insert(items, {
+            name = itemName,
+            quantity = itemQuantity,
+            category = category
+        })
     end
-
+    
+    return items
 end
 
-local function getStock()
+-- 2. Đọc trực tiếp từ RemoteEvent / RemoteFunction (Dành cho game pro)
+local function fetchDataFromRemote()
+    -- CÁC GAME LỚN thường có 1 RemoteFunction để Client hỏi Server thông tin Shop
+    -- VD: local shopData = ReplicatedStorage.Remotes.GetShop:InvokeServer()
+    -- Phần này yêu cầu bạn dùng công cụ Dex/SimpleSpy để tìm đúng tên Remote của game!
+    return nil -- Trả về nil mặc định nếu chưa có Remote
+end
 
+local function getMarketData()
     local seeds = {}
-    local gears = {}
-
-    local seedShop = workspace:FindFirstChild("SeedShop")
-    if seedShop then
-        for _,v in pairs(seedShop:GetChildren()) do
-            table.insert(seeds,v.Name)
+    local gear = {}
+    local weather = { status = "Clear", duration = 0 }
+    
+    --------------------------------------------------------------------------
+    -- TÌM SEED & GEAR QUA THƯ MỤC CỐ ĐỊNH (Không phụ thuộc UI bị ẩn)
+    --------------------------------------------------------------------------
+    -- Ví dụ GAME lưu Data ở ReplicatedStorage (Sửa tên thư mục "SeedData", "GearData" lại cho đúng Game của bạn)
+    local seedFolder = ReplicatedStorage:FindFirstChild("SeedData", true) or ReplicatedStorage:FindFirstChild("Seeds", true)
+    if seedFolder then
+        seeds = scanFolderForItems(seedFolder, "seed")
+    end
+    
+    local gearFolder = ReplicatedStorage:FindFirstChild("GearData", true) or ReplicatedStorage:FindFirstChild("Gears", true) or ReplicatedStorage:FindFirstChild("Equipment", true)
+    if gearFolder then
+        gear = scanFolderForItems(gearFolder, "gear")
+    end
+    
+    --------------------------------------------------------------------------
+    -- PHƯƠNG ÁN DỰ PHÒNG: Quét Game State qua Player's Data hoặc ServerStats
+    --------------------------------------------------------------------------
+    if #seeds == 0 and #gear == 0 then
+        -- Thử tìm trong Workspace (Biển báo Shop)
+        local shopBoard = Workspace:FindFirstChild("ShopBoard", true) or Workspace:FindFirstChild("MarketStock", true)
+        if shopBoard then
+            -- Quét Attribute của cái bảng Shop
+            local attributes = shopBoard:GetAttributes()
+            for key, val in pairs(attributes) do
+                if type(val) == "number" then
+                    -- Quy ước tự động: Nếu tên key có chữ Seed thì bỏ vào Seed, còn lại vào Gear
+                    if string.match(key:lower(), "seed") then
+                        table.insert(seeds, { name = key, quantity = val, category = "seed" })
+                    else
+                        table.insert(gear, { name = key, quantity = val, category = "gear" })
+                    end
+                end
+            end
         end
     end
-
-    local gearShop = workspace:FindFirstChild("GearShop")
-    if gearShop then
-        for _,v in pairs(gearShop:GetChildren()) do
-            table.insert(gears,v.Name)
-        end
+    
+    --------------------------------------------------------------------------
+    -- TÌM WEATHER STATE (Thường lưu ở Lighting hoặc Workspace.Weather)
+    --------------------------------------------------------------------------
+    local lighting = game:GetService("Lighting")
+    -- Lấy thông qua Attribute
+    local currentWea = lighting:GetAttribute("CurrentWeather") or Workspace:GetAttribute("Weather") or ReplicatedStorage:GetAttribute("WeatherState")
+    if currentWea then
+        weather.status = tostring(currentWea)
     end
-
-    local weather = "Unknown"
-    local w = workspace:FindFirstChild("Weather")
-    if w then
-        weather = w.Value
+    
+    -- Lấy thời gian còn lại (Duration)
+    local durationVal = lighting:GetAttribute("WeatherDuration") or lighting:GetAttribute("WeatherTimeLeft")
+    if durationVal then
+        weather.duration = tonumber(durationVal)
     end
+    
+    -- In Log Debug
+    print(string.format("[GHZ Parser] Mined Data -> Seeds: %d, Gears: %d | Thời Tiết: %s (%ds)", #seeds, #gear, weather.status, weather.duration))
+    
+    return seeds, gear, weather
+end
 
-    return {
-        content =
-        "**Seed:** "..table.concat(seeds,", ")..
-        "\n**Gear:** "..table.concat(gears,", ")..
-        "\n**Weather:** "..weather
+-------------------------------------------------------------------------------
+-- HỆ THỐNG GỬI API 
+-------------------------------------------------------------------------------
+local function sendData()
+    local seeds, gear, weather = getMarketData()
+    
+    -- Nếu vẫn không lấy được dữ liệu nội bộ nào
+    if #seeds == 0 and #gear == 0 then
+        warn("[GHZ Script] Chưa tìm trúng thư mục Data của Game! Bạn cần mở SimpleSpy/Dex để tìm tên Thư Mục chuẩn xác ở ReplicatedStorage.")
+        -- Dữ liệu mẫu (Gửi lên để API không bị crash)
+        seeds = {{ name = "Unknown Seed", quantity = 0, category = "seed" }} 
+        gear = {{ name = "Unknown Gear", quantity = 0, category = "gear" }} 
+    end
+    
+    local payload = {
+        seeds = seeds,
+        gear = gear,
+        weather = weather,
+        timestamp = os.time()
     }
-
+    
+    local jsonData = HttpService:JSONEncode(payload)
+    local req = (syn and syn.request) or (http and http.request) or request
+    
+    if req then
+        local response = req({
+            Url = API_URL,
+            Method = "POST",
+            Headers = {
+                ["Content-Type"] = "application/json"
+            },
+            Body = jsonData
+        })
+        
+        if response.StatusCode == 200 then
+            print("[GHZ Script] ✅ Bơm Data Ẩn thành công!", response.Body)
+        else
+            warn("[GHZ Script] ❌ Lỗi API:", response.StatusCode)
+        end
+    else
+        warn("[GHZ Script] ❌ Executor thiếu hụt hàm request()!")
+    end
 end
 
-local function sendStock()
-    local data = getStock()
-    sendWebhook(data)
-end
-
--- BUTTON EVENTS
-
-testBtn.MouseButton1Click:Connect(function()
-    sendWebhook({
-        content = "Webhook Test ✔"
-    })
-end)
-
-forceBtn.MouseButton1Click:Connect(sendStock)
-
-mini.MouseButton1Click:Connect(function()
-    frame.Visible = false
-    openBtn.Visible = true
-end)
-
-openBtn.MouseButton1Click:Connect(function()
-    frame.Visible = true
-    openBtn.Visible = false
-end)
-
-close.MouseButton1Click:Connect(function()
-    gui:Destroy()
-end)
-
--- AUTO STOCK LOOP
-
+-- Vòng lặp gửi tự động (Mỗi 15 giây)
 task.spawn(function()
+    while true do
+        local success, err = pcall(sendData)
+        if not success then
+            warn("[GHZ Script] Lỗi lúc quét Game Data:", err)
+        end
+        task.wait(15)
+    end
+end)
 
-    while true
+print("[GHZ Script] 🕵️ Trình lấy dữ liệu 'Ẩn' đã khởi chạy. Không cần cuộn Cửa hàng!")
