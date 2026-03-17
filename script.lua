@@ -94,16 +94,32 @@ local function findTextLabelWithKeyword(parent, keyword)
     return nil
 end
 
--- 2. Dò tìm Frame chứa danh sách Item (Dùng cho Shop)
+-- Whitelist tên Hạt Giống (Seeds) - Chỉ chấp nhận tên trong danh sách này
+local SEED_NAMES = {
+    "onion", "corn", "carrot", "potato", "tomato", "blueberry", "strawberry",
+    "grape", "wheat", "pumpkin", "watermelon", "mushroom", "apple", "orange",
+    "lemon", "cherry", "pear", "pineapple", "coconut", "mango", "peach",
+    "pepper", "eggplant", "sunflower", "bamboo", "cactus", "rose", "tulip",
+    "lily", "daisy", "orchid", "lavender", "seed", "sprout", "plant"
+}
+
+-- Whitelist tên Đồ Dùng (Gear) - Chỉ chấp nhận tên trong danh sách này
+local GEAR_NAMES = {
+    "sprinkler", "watering", "trowel", "shovel", "hoe", "scythe", "basket",
+    "reverter", "favorite", "tool", "can", "gloves", "boots", "hat",
+    "fertilizer", "soil", "pot", "planter", "rake", "pitchfork"
+}
+
+-- Trả về "seed", "gear", hoặc NIL nếu không khớp whitelist
 local function guessItemCategory(itemName)
     local name = string.lower(itemName)
-    if string.find(name, "seed") or string.find(name, "sprout") or string.find(name, "plant") then
-        return "seed"
-    elseif string.find(name, "sprinkler") or string.find(name, "pot") or string.find(name, "water") or string.find(name, "gear") then
-        return "gear"
-    else
-        return "unknown" 
+    for _, keyword in ipairs(SEED_NAMES) do
+        if string.find(name, keyword) then return "seed" end
     end
+    for _, keyword in ipairs(GEAR_NAMES) do
+        if string.find(name, keyword) then return "gear" end
+    end
+    return nil  -- Không trong whitelist -> Bỏ qua hoàn toàn
 end
 
 -- Rút trích số ra khỏi chuỗi (Ví dụ "Stock: 15" -> 15)
@@ -170,29 +186,50 @@ local function scanUIForStock(guiLayer)
         
         for _, text in ipairs(cardLabels) do
             local lowerText = string.lower(text)
+            
+            -- TÌM STOCK: CHỈ chấp nhận nhãn CÓ CHỮ stock/left hoặc định dạng số đặc biệt
+            -- KHÔNG lấy số đứng mình (tránh bị nhầm giá tiền)
             if not isPriceOrMoney(text) then
                 local num = extractNumber(text)
-                if num then
-                    if string.find(lowerText, "stock") or string.find(lowerText, "left") or string.match(text, "%d+[xX]") or string.match(text, "[xX]%s*%d+") then
+                if num and num > 0 then
+                    local isStockLabel = string.find(lowerText, "stock") 
+                        or string.find(lowerText, "left")
+                        or string.find(lowerText, "remain")
+                        or string.match(text, "^%d+[xX]$")  -- "9x"
+                        or string.match(text, "^[xX]%d+$")  -- "x9"
+                        or string.match(text, "^%d+ stock") -- "9 stock" 
+                        or string.match(text, "^%d+ left")  -- "9 left"
+                    if isStockLabel then
                         itemStock = num
                         isExplicitStock = true
-                    elseif itemStock == -1 then
-                        itemStock = num
                     end
                 end
             end
             
-            if not isPriceOrMoney(text) and not string.find(lowerText, "stock") and not string.find(lowerText, "left") then
-                if not tonumber(text) and string.len(text) > 2 and not string.match(text, "^%d+[xX]$") and not string.match(text, "^[xX]%s*%d+$") then
-                    if string.len(text) > string.len(itemName) and string.len(text) < 40 then
+            -- TÌM TÊN: Nhãn dài nhất không phải giá / số / tag
+            if not isPriceOrMoney(text) then
+                local isNumberLike = tonumber(text) 
+                    or string.match(text, "^%d+[xX]$")
+                    or string.match(text, "^[xX]%s*%d+$")
+                    or string.match(text, "^[%d%s]+$")
+                local isStockTag = string.find(lowerText, "stock") or string.find(lowerText, "left")
+                if not isNumberLike and not isStockTag and string.len(text) > 2 and string.len(text) < 40 then
+                    if string.len(text) > string.len(itemName) then
                         itemName = text
                     end
                 end
             end
         end
         
-        if itemName ~= "" and itemStock > 0 and not results.foundTracker[itemName] then
-            local cat = guessItemCategory(itemName)
+        -- Chỉ xét Mushroom với stock chuẩn (isExplicitStock), còn lại cũng cần stock chuẩn để tránh nhầm giá
+        if not isExplicitStock then return end
+        if itemName == "" or itemStock <= 0 then return end
+        
+        -- Kiểm tra whitelist - Bỏ ngay nếu không khớp
+        local cat = guessItemCategory(itemName)
+        if not cat then return end  -- Không trong whitelist -> Bỏ qua
+        
+        if not results.foundTracker[itemName] then
             table.insert(cat == "seed" and results.seeds or results.gear, {
                 name = itemName,
                 quantity = itemStock,
@@ -204,39 +241,18 @@ local function scanUIForStock(guiLayer)
         end
     end
 
-    -- CHẠY QUÉT
-    local foundAny = false
+    -- CHẠY QUÉT CHUẨN (Container có Layout - đáng tin nhất)
     for _, container in pairs(guiLayer:GetDescendants()) do
         if screenGui and container:IsDescendantOf(screenGui) then continue end
 
-        -- Quét các Frame có layout (Chuẩn nhất)
         if (container:IsA("ScrollingFrame") or container:IsA("Frame")) and 
            (container:FindFirstChildWhichIsA("UIGridLayout") or container:FindFirstChildWhichIsA("UIListLayout")) then
             for _, itemUI in pairs(container:GetChildren()) do
-                if processItemUI(itemUI) then foundAny = true end
+                processItemUI(itemUI)
             end
         end
     end
-    
-    -- 2. CHẾ ĐỘ QUÉT SÂU (Nếu quét chuẩn không ra gì - Dành cho các game UI lạ)
-    if not foundAny then
-        print("[GHZ Debug] 🔍 Quét chuẩn không thấy gì, đang chuyển sang Deep Scan...")
-        for _, obj in pairs(guiLayer:GetDescendants()) do
-            if obj:IsA("Frame") and #obj:GetChildren() >= 2 then
-                -- Nếu frame có chứa chữ "Stock" hoặc "Price" hoặc ký hiệu tiền tệ
-                local hasKeywords = false
-                for _, child in pairs(obj:GetDescendants()) do
-                    if child:IsA("TextLabel") then
-                        local t = string.lower(child.Text)
-                        if string.find(t, "stock") or string.find(t, "left") or string.find(t, "$") or string.find(t, "price") then
-                            hasKeywords = true break
-                        end
-                    end
-                end
-                if hasKeywords then processItemUI(obj) end
-            end
-        end
-    end
+    -- LƯU Ý: Đã tắt Deep Scan vì nó quét nhầm quá nhiều Frame không phải Shop UI
     
     return results.seeds, results.gear
 end
