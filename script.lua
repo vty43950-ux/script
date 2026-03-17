@@ -1,5 +1,3 @@
--- 🔥 GIỮ NGUYÊN CODE GỐC CỦA BẠN + PATCH NHỎ (KHÔNG RÚT GỌN)
-
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -7,231 +5,315 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CoreGui = game:GetService("CoreGui")
 local LocalPlayer = Players.LocalPlayer
 
+-- API URL
 local API_URL = "https://zenithghz.qzz.io/api/update"
 
--- UI
+-------------------------------------------------------------------------------
+-- GIAO DIỆN (UI)
+-------------------------------------------------------------------------------
 local uiLayer = (gethui and gethui()) or CoreGui:FindFirstChild("RobloxGui") or CoreGui
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "GHZ_Tracker_UI"
+screenGui.ResetOnSpawn = false
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
 if uiLayer:FindFirstChild("GHZ_Tracker_UI") then
     uiLayer["GHZ_Tracker_UI"]:Destroy()
 end
-
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "GHZ_Tracker_UI"
 screenGui.Parent = uiLayer
 
 local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
 mainFrame.Size = UDim2.new(0, 250, 0, 100)
 mainFrame.Position = UDim2.new(0, 10, 0, 10)
-mainFrame.BackgroundColor3 = Color3.fromRGB(30,30,30)
+mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 mainFrame.BackgroundTransparency = 0.2
 mainFrame.Parent = screenGui
 
-Instance.new("UICorner", mainFrame)
+local uiCorner = Instance.new("UICorner")
+uiCorner.CornerRadius = UDim.new(0, 8)
+uiCorner.Parent = mainFrame
 
-local status = Instance.new("TextLabel", mainFrame)
-status.Size = UDim2.new(1,0,0,30)
-status.BackgroundTransparency = 1
-status.Text = "🌱 GHZ Tracker"
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Size = UDim2.new(1, 0, 0, 30)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = "🌱 GHZ Auto-Tracker"
+titleLabel.TextColor3 = Color3.fromRGB(150, 255, 150)
+titleLabel.Font = Enum.Font.GothamBold
+titleLabel.TextSize = 14
+titleLabel.Parent = mainFrame
 
-local info = Instance.new("TextLabel", mainFrame)
-info.Position = UDim2.new(0,0,0,30)
-info.Size = UDim2.new(1,0,1,-30)
-info.BackgroundTransparency = 1
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Size = UDim2.new(1, -20, 0, 25)
+statusLabel.Position = UDim2.new(0, 10, 0, 30)
+statusLabel.BackgroundTransparency = 1
+statusLabel.Text = "Status: 🟡 Khởi động..."
+statusLabel.TextColor3 = Color3.fromRGB(240, 240, 240)
+statusLabel.Font = Enum.Font.GothamMedium
+statusLabel.TextSize = 12
+statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+statusLabel.Parent = mainFrame
 
-local function updateUI(a,b)
-    status.Text = a
-    if b then info.Text = b end
+local infoLabel = Instance.new("TextLabel")
+infoLabel.Size = UDim2.new(1, -20, 0, 40)
+infoLabel.Position = UDim2.new(0, 10, 0, 55)
+infoLabel.BackgroundTransparency = 1
+infoLabel.Text = "Data: Chờ quét..."
+infoLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+infoLabel.Font = Enum.Font.Gotham
+infoLabel.TextSize = 11
+infoLabel.TextXAlignment = Enum.TextXAlignment.Left
+infoLabel.TextYAlignment = Enum.TextYAlignment.Top
+infoLabel.Parent = mainFrame
+
+local function updateUI(statusMsg, infoMsg, color)
+    statusLabel.Text = statusMsg
+    if infoMsg then infoLabel.Text = infoMsg end
+    if color then statusLabel.TextColor3 = color end
 end
 
--- ================= FIX ZONE =================
+-------------------------------------------------------------------------------
+-- LOGIC QUÉT VÀ BỘ LỌC
+-------------------------------------------------------------------------------
 
--- ❌ blacklist thêm fertile soil
-local function isBlacklisted(name)
-    name = string.lower(name)
-    if string.find(name,"fertile soil") then return true end
-    return false
+local SEED_NAMES = {
+    "onion", "corn", "carrot", "potato", "tomato", "blueberry", "strawberry",
+    "grape", "wheat", "pumpkin", "watermelon", "mushroom", "apple", "orange",
+    "lemon", "cherry", "pear", "pineapple", "coconut", "mango", "peach",
+    "pepper", "eggplant", "sunflower", "bamboo", "cactus", "rose", "tulip",
+    "lily", "daisy", "orchid", "lavender", "seed", "sprout", "plant"
+}
+
+local GEAR_NAMES = {
+    "sprinkler", "watering", "trowel", "shovel", "hoe", "scythe", "basket",
+    "reverter", "favorite", "tool", "can", "gloves", "boots", "hat",
+    "fertilizer", "soil", "pot", "planter", "rake", "pitchfork"
+}
+
+-- Blacklist các mục không mong muốn hoặc gây nhiễu
+local ITEM_BLACKLIST = {
+    "fertile soil", "max", "owned", "inventory", "level", "xp", "rank", 
+    "requirement", "equipped", "shillings", "balance", "total", "buy", "sell"
+}
+
+local function guessItemCategory(itemName)
+    local name = string.lower(itemName)
+    
+    -- Kiểm tra Blacklist trước
+    for _, word in ipairs(ITEM_BLACKLIST) do
+        if string.find(name, word) then return nil end
+    end
+
+    for _, keyword in ipairs(SEED_NAMES) do
+        if string.find(name, keyword) then return "seed" end
+    end
+    for _, keyword in ipairs(GEAR_NAMES) do
+        if string.find(name, keyword) then return "gear" end
+    end
+    return nil
 end
 
--- ❌ detect mushroom
-local function isMushroom(name)
-    return string.find(string.lower(name),"mushroom")
+local function extractStockQuantity(text)
+    if not text then return nil end
+    local lowerText = string.lower(text)
+    
+    -- Ưu tiên tìm pattern x10 hoặc 10x
+    local p1 = string.match(text, "[xX]%s*(%d+)")
+    local p2 = string.match(text, "(%d+)%s*[xX]")
+    if p1 then return tonumber(p1) end
+    if p2 then return tonumber(p2) end
+    
+    -- Nếu có từ khóa Stock/Left
+    if string.find(lowerText, "stock") or string.find(lowerText, "left") then
+        local n = string.match(text, "%d+")
+        return n and tonumber(n)
+    end
+    return nil
 end
 
--- ================= SCAN =================
-
-local function extractNumber(text)
-    local n = string.match(text,"%d+")
-    return n and tonumber(n)
+local function isPrice(text)
+    local t = string.lower(text)
+    if string.match(t, "[%$%¢]") or string.find(t, "shilling") or string.find(t, "coin") then
+        return true
+    end
+    local n = tonumber(string.match(text, "^%d+$"))
+    return n and n >= 500
 end
 
-local function scanUI(gui)
-    local seeds = {}
-    local gear = {}
-    local added = {}
+local function scanUIForStock(guiLayer)
+    local results = { seeds = {}, gear = {}, foundTracker = {} }
+    
+    -- Tìm các Container chứa Item (thường có Layout)
+    for _, container in pairs(guiLayer:GetDescendants()) do
+        if screenGui and container:IsDescendantOf(screenGui) then continue end
 
-    for _,obj in pairs(gui:GetDescendants()) do
-        if obj:IsA("Frame") then
+        if (container:IsA("ScrollingFrame") or container:IsA("Frame")) and 
+           (container:FindFirstChildWhichIsA("UIGridLayout") or container:FindFirstChildWhichIsA("UIListLayout")) then
             
-            local labels = {}
-            for _,c in pairs(obj:GetDescendants()) do
-                if c:IsA("TextLabel") and c.Text ~= "" then
-                    table.insert(labels,c.Text)
-                end
-            end
-
-            if #labels == 0 then continue end
-
-            local name = ""
-            local stock = -1
-
-            -- NAME
-            for _,t in ipairs(labels) do
-                if string.len(t) > string.len(name) and not tonumber(t) then
-                    name = t
-                end
-            end
-
-            if name == "" then continue end
-            if isBlacklisted(name) then continue end
-
-            local mush = isMushroom(name)
-
-            -- STOCK
-            for _,t in ipairs(labels) do
-                local l = string.lower(t)
-
-                -- 🔥 FIX: bỏ x5 mushroom
-                if not mush then
-                    if string.match(t,"%d+[xX]") or string.match(t,"[xX]%d+") then
-                        stock = extractNumber(t)
+            for _, itemCard in pairs(container:GetChildren()) do
+                if not (itemCard:IsA("Frame") or itemCard:IsA("ImageLabel") or itemCard:IsA("TextButton")) then continue end
+                
+                local cardTexts = {}
+                local itemImage = ""
+                
+                -- Thu thập thông tin trong Card
+                for _, child in pairs(itemCard:GetDescendants()) do
+                    if child:IsA("TextLabel") and child.Visible and child.Text ~= "" then
+                        table.insert(cardTexts, child.Text)
+                    elseif child:IsA("ImageLabel") and child.Visible and child.Image ~= "" then
+                        local assetId = string.match(child.Image, "%d+")
+                        if assetId and itemImage == "" then
+                            itemImage = "https://www.roblox.com/asset-thumbnail/image?assetId=" .. assetId .. "&width=420&height=420&format=png"
+                        end
                     end
                 end
 
-                if string.find(l,"stock") or string.find(l,"left") then
-                    stock = extractNumber(t)
+                -- 1. Tìm Tên hợp lệ
+                local finalName = ""
+                local category = nil
+                for _, txt in ipairs(cardTexts) do
+                    category = guessItemCategory(txt)
+                    if category then
+                        finalName = txt
+                        break
+                    end
                 end
-            end
 
-            -- 🔥 FIX: không fallback cho mushroom
-            if stock == -1 and not mush then
-                for _,t in ipairs(labels) do
-                    local n = extractNumber(t)
-                    if n and n <= 99 then
-                        stock = n
+                -- 2. Tìm Stock (Chỉ tiếp tục nếu tìm được tên)
+                if finalName ~= "" and not results.foundTracker[finalName] then
+                    local finalStock = -1
+                    
+                    for _, txt in ipairs(cardTexts) do
+                        local s = extractStockQuantity(txt)
+                        if s then 
+                            finalStock = s 
+                            break 
+                        end
+                    end
+                    
+                    -- Fallback nếu không có nhãn x10 (Tìm số nhỏ 1-99 không phải giá)
+                    if finalStock == -1 then
+                        for _, txt in ipairs(cardTexts) do
+                            if not isPrice(txt) then
+                                local n = tonumber(string.match(txt, "%d+"))
+                                if n and n > 0 and n < 200 then
+                                    finalStock = n
+                                    break
+                                end
+                            end
+                        end
+                    end
+
+                    -- Chỉ thêm nếu dữ liệu hợp lệ (Tránh stock = 0 hoặc k tìm thấy)
+                    if finalStock > 0 then
+                        table.insert(category == "seed" and results.seeds or results.gear, {
+                            name = finalName,
+                            quantity = finalStock,
+                            category = category,
+                            image = itemImage
+                        })
+                        results.foundTracker[finalName] = true
                     end
                 end
             end
+        end
+    end
+    return results.seeds, results.gear
+end
 
-            if stock <= 0 then continue end
+-------------------------------------------------------------------------------
+-- THỜI TIẾT & API
+-------------------------------------------------------------------------------
 
-            -- CATEGORY
-            local lower = string.lower(name)
-            local cat = nil
-
-            if string.find(lower,"seed") or string.find(lower,"mushroom") then
-                cat = "seed"
-            else
-                cat = "gear"
-            end
-
-            if not added[name] then
-                local item = {
-                    name = name,
-                    quantity = stock,
-                    category = cat
-                }
-
-                if cat == "seed" then
-                    table.insert(seeds,item)
-                else
-                    table.insert(gear,item)
+local function getGardenHorizonsData()
+    local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+    updateUI("Status: 🔍 Đang quét dữ liệu...", nil, Color3.fromRGB(255, 200, 100))
+    
+    local weather = { status = "None", duration = 0 }
+    local wKeywords = {"starfall", "storm", "clear", "rain", "sunny", "meteor", "mowis", "cloudy", "windy", "snow"}
+    
+    pcall(function()
+        -- Quét thời tiết
+        for _, obj in pairs(PlayerGui:GetDescendants()) do
+            if obj:IsA("TextLabel") and obj.Visible then
+                local t = string.lower(obj.Text)
+                for _, kw in ipairs(wKeywords) do
+                    if string.find(t, kw) then
+                        weather.status = kw:gsub("^%l", string.upper)
+                        -- Tìm thời gian gần đó
+                        local m, s = string.match(obj.Parent:GetFullName(), "(%d+):(%d+)") -- Thử tìm trong node cha
+                        break
+                    end
                 end
-
-                added[name] = true
             end
         end
-    end
+    end)
 
-    return seeds,gear
+    local seeds, gear = scanUIForStock(PlayerGui)
+    
+    local infoStr = string.format("Data: %d Hạt, %d Đồ\nWeather: %s", #seeds, #gear, weather.status)
+    updateUI("Status: ✅ Quét hoàn tất", infoStr, Color3.fromRGB(130, 255, 130))
+    
+    return seeds, gear, weather
 end
 
--- WEATHER (giữ nguyên đơn giản)
-local function getWeather(gui)
-    local w = {status="None",duration=0}
-
-    for _,v in pairs(gui:GetDescendants()) do
-        if v:IsA("TextLabel") then
-            local t = string.lower(v.Text)
-            if string.find(t,"rain") then w.status="Rain" end
-            if string.find(t,"storm") then w.status="Storm" end
-            if string.find(t,"clear") then w.status="Clear" end
-        end
+local function postDataToAPI()
+    local seeds, gear, weather = getGardenHorizonsData()
+    
+    if #seeds == 0 and #gear == 0 and weather.status == "None" then
+        updateUI("Status: ⚠️ Không thấy Shop!", "Hãy mở Cửa hàng để lấy data", Color3.fromRGB(255, 100, 100))
+        return 
     end
-
-    return w
-end
-
--- MAIN
-local function getData()
-    updateUI("🔍 scanning...")
-
-    local gui = LocalPlayer:WaitForChild("PlayerGui")
-
-    local seeds,gear = scanUI(gui)
-    local weather = getWeather(gui)
-
-    updateUI("✅ done","Seeds "..#seeds.." | Gear "..#gear)
-
-    return seeds,gear,weather
-end
-
--- API
-local function send()
-    local seeds,gear,weather = getData()
-
-    if #seeds == 0 and #gear == 0 then
-        updateUI("❌ no shop")
-        return
-    end
-
-    local body = HttpService:JSONEncode({
+    
+    local payload = {
         seeds = seeds,
         gear = gear,
         weather = weather,
-        time = os.time()
-    })
-
-    local req = (syn and syn.request) or request
-
+        timestamp = os.time()
+    }
+    
+    local req = (syn and syn.request) or (http and http.request) or request
     if req then
-        pcall(function()
-            req({
+        local success, response = pcall(function()
+            return req({
                 Url = API_URL,
                 Method = "POST",
-                Headers = {["Content-Type"]="application/json"},
-                Body = body
+                Headers = { ["Content-Type"] = "application/json" },
+                Body = HttpService:JSONEncode(payload)
             })
         end)
-        updateUI("✅ sent API")
+        
+        if success and response.StatusCode == 200 then
+            updateUI("Status: ✅ API Updated", nil, Color3.fromRGB(150, 255, 150))
+        else
+            updateUI("Status: ❌ Lỗi gửi API", "Kiểm tra Server của bạn", Color3.fromRGB(255, 100, 100))
+        end
     end
 end
 
--- LOOP RESTOCK
-local function waitNext()
+-------------------------------------------------------------------------------
+-- VÒNG LẶP ĐỒNG BỘ UTC
+-------------------------------------------------------------------------------
+
+local function getSecondsUntilNextRestock()
     local t = os.date("!*t")
-    local sec = t.sec + (t.min%5)*60
-    return 300 - sec
+    local secIntoCycle = (t.min % 5) * 60 + t.sec
+    local remaining = 300 - secIntoCycle
+    return remaining > 0 and remaining or 300
 end
 
 task.spawn(function()
-    send()
+    postDataToAPI()
     while true do
-        local w = waitNext()
-        for i=w,1,-1 do
-            updateUI("⏳ "..i.."s")
+        local waitTime = getSecondsUntilNextRestock()
+        for i = waitTime, 1, -1 do
+            local mins = math.floor(i / 60)
+            local secs = i % 60
+            updateUI(string.format("Status: ⏳ Restock sau %02d:%02d", mins, secs), nil)
             task.wait(1)
+            if not screenGui.Parent then return end
         end
-        send()
+        postDataToAPI()
+        task.wait(2) -- Nghỉ ngắn tránh spam
     end
 end)
