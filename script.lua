@@ -12,7 +12,7 @@ local CoreGui = getServiceSafe("CoreGui")
 print("[GHZ] 📦 Services loaded")
 
 -- API URL
-local API_URL = "https://zenithghz.indevs.in/api/update"
+local API_URL = "https://zenithghz.qzz.io/api/update"
 
 -------------------------------------------------------------------------------
 -- CHỜ LOCALPLAYER & PLAYERGUI (Failsafe)
