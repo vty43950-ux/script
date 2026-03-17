@@ -129,7 +129,8 @@ local function scanUIForStock(guiLayer)
     local blacklist = {
         "harvested", "earned", "playtime", "shillings", "total", "level", "xp", 
         "balance", "owned", "shilling", "rank", "prestige", "quest", "inventory",
-        "buy", "sell", "confirm", "close", "back", "next", "equip", "status", "v643"
+        "buy", "sell", "confirm", "close", "back", "next", "equip", "status", "v643",
+        "shilling", "money", "cash", "gems"
     }
 
     -- Duyệt tìm các khung chứa (ScrollingFrame/Frame có layout)
@@ -145,6 +146,7 @@ local function scanUIForStock(guiLayer)
                 if itemUI:IsA("Frame") or itemUI:IsA("ImageLabel") or itemUI:IsA("TextButton") then
                     
                     local cardLabels = {}
+                    local itemImage = ""
                     local isJunkCard = false
                     local isSoldOut = false
                     
@@ -167,6 +169,12 @@ local function scanUIForStock(guiLayer)
                             
                             if isJunkCard or isSoldOut then break end
                             table.insert(cardLabels, txt)
+                        elseif child:IsA("ImageLabel") and child.Visible and child.Image ~= "" then
+                            -- D. Lấy Asset ID từ ảnh roblox
+                            local assetId = string.match(child.Image, "%d+")
+                            if assetId and itemImage == "" then
+                                itemImage = "https://www.roblox.com/asset-thumbnail/image?assetId=" .. assetId .. "&width=420&height=420&format=png"
+                            end
                         end
                     end
                     
@@ -185,10 +193,12 @@ local function scanUIForStock(guiLayer)
                         if not isPriceOrMoney(text) then
                             local num = extractNumber(text)
                             if num then
+                                -- Nếu text chứa "stock", "left" hoặc định dạng "Nx" hoặc "xN" -> Đây là stock chuẩn
                                 if string.find(lowerText, "stock") or string.find(lowerText, "left") or string.match(text, "%d+[xX]") or string.match(text, "[xX]%s*%d+") then
                                     itemStock = num
                                     isActuallyStock = true
                                 elseif itemStock == -1 then
+                                    -- Nếu chưa tìm thấy stock chuẩn, lấy tạm số đầu tiên thấy được (có thể là fallback nếu card không có chữ "Stock")
                                     itemStock = num
                                 end
                             end
@@ -196,7 +206,8 @@ local function scanUIForStock(guiLayer)
                         
                         -- TÌM TÊN (Nhãn dài nhất không phải số/giá)
                         if not isPriceOrMoney(text) and not string.find(lowerText, "stock") and not string.find(lowerText, "left") then
-                            if not tonumber(text) or string.len(text) > 5 then
+                            -- LỌC TÊN: Không được là số thuần túy (VD: "358") và độ dài > 2
+                            if not tonumber(text) and string.len(text) > 2 and not string.match(text, "^%d+[xX]$") and not string.match(text, "^[xX]%d+$") then
                                 if string.len(text) > string.len(itemName) and string.len(text) < 40 then
                                     itemName = text
                                 end
@@ -210,7 +221,8 @@ local function scanUIForStock(guiLayer)
                         table.insert(cat == "seed" and results.seeds or results.gear, {
                             name = itemName,
                             quantity = itemStock,
-                            category = cat
+                            category = cat,
+                            image = itemImage -- Thêm ảnh vào payload (Roblox Asset ID)
                         })
                         results.foundTracker[itemName] = true
                     end
