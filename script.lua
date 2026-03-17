@@ -27,7 +27,7 @@ local OVERRIDE_SEED = { "fertile soil" }
 local OVERRIDE_GEAR = { "harvest hand" }
 
 -- Items that MUST have the word "Stock" or "Left" to avoid ghost numbers (like x5)
-local STRICT_ITEMS = { "mushroom", "fertile soil", "harvest hand", "apple", "tomato" }
+local STRICT_ITEMS = { "Mushroom Seed", "fertile soil", "harvest hand", "Total Shoveled" }
 
 -------------------------------------------------------------------------------
 -- UI SETUP
