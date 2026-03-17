@@ -94,20 +94,27 @@ local function findTextLabelWithKeyword(parent, keyword)
     return nil
 end
 
--- Whitelist tên Hạt Giống (Seeds) - Chỉ chấp nhận tên trong danh sách này
+-- Whitelist tên Hạt Giống (Seeds)
 local SEED_NAMES = {
     "onion", "corn", "carrot", "potato", "tomato", "blueberry", "strawberry",
     "grape", "wheat", "pumpkin", "watermelon", "mushroom", "apple", "orange",
     "lemon", "cherry", "pear", "pineapple", "coconut", "mango", "peach",
     "pepper", "eggplant", "sunflower", "bamboo", "cactus", "rose", "tulip",
-    "lily", "daisy", "orchid", "lavender", "seed", "sprout", "plant"
+    "lily", "daisy", "orchid", "lavender", "seed", "sprout", "plant",
+    "fertile soil", "soil"  -- Fertile Soil là seed, không phải gear
 }
 
--- Whitelist tên Đồ Dùng (Gear) - Chỉ chấp nhận tên trong danh sách này
+-- Whitelist tên Đồ Dùng (Gear)
 local GEAR_NAMES = {
-    "sprinkler", "watering", "trowel", "shovel", "hoe", "scythe", "basket",
-    "reverter", "favorite", "tool", "can", "gloves", "boots", "hat",
-    "fertilizer", "soil", "pot", "planter", "rake", "pitchfork"
+    "sprinkler", "watering can", "trowel", "shovel", "hoe", "scythe", "basket",
+    "reverter", "favorite tool", "can", "gloves", "boots", "hat",
+    "fertilizer", "rake", "pitchfork", "recall wrench", "wrench",
+    "watering", "harvest"  -- Chỉ giữ gear thực sự
+}
+
+-- Item đặc biệt CẦN nhãn Stock/Left TỰ MINH mới nhận (tránh ghost stock)
+local STRICT_ITEMS = {
+    "mushroom",  -- Mushroom hay bị ghost stock
 }
 
 -- Trả về "seed", "gear", hoặc NIL nếu không khớp whitelist
@@ -238,21 +245,36 @@ local function scanUIForStock(guiLayer)
             end
         end
         
-        -- Nếu KHÔNG tìm thấy nhãn stock rõ ràng, thử tìm số nhỏ hợp lý (1-99)
-        -- Đây là fallback cho UI không có nhãn "Stock" tường minh
+        -- Nếu KHÔNG tìm thấy nhãn stock rõ ràng:
+        -- STRICT_ITEMS (VD: Mushroom) -> Bỏ qua hoàn toàn (ghost stock)
+        -- Các item khác -> Thử fallback: tìm số nhỏ (1-99)
         if not isExplicitStock then
-            for _, text in ipairs(cardLabels) do
-                if not isPriceOrMoney(text) then
-                    local lowerText = string.lower(text)
-                    local isStockTag = string.find(lowerText, "stock") or string.find(lowerText, "left")
-                    if not isStockTag then
-                        -- Tìm số nhỏ hợp lý (1-99) trong nhãn
-                        for n in string.gmatch(text, "%d+") do
-                            local num = tonumber(n)
-                            if num and num >= 1 and num <= 99 then
-                                if itemStock == -1 or num < itemStock then
-                                    itemStock = num
-                                    isExplicitStock = true
+            -- Kiểm tra có phải strict item không
+            local isStrict = false
+            for _, strictName in ipairs(STRICT_ITEMS) do
+                if string.find(string.lower(itemName), strictName) then
+                    isStrict = true
+                    break
+                end
+            end
+            
+            if isStrict then
+                -- Strict item: Yêu cầu nhãn số TƯᨌNG MINH, không fallback
+                return
+            else
+                -- Item bình thường: fallback tìm số nhỏ (1-99)
+                for _, text in ipairs(cardLabels) do
+                    if not isPriceOrMoney(text) then
+                        local lt = string.lower(text)
+                        local isStockTag = string.find(lt, "stock") or string.find(lt, "left")
+                        if not isStockTag then
+                            for n in string.gmatch(text, "%d+") do
+                                local num = tonumber(n)
+                                if num and num >= 1 and num <= 99 then
+                                    if itemStock == -1 or num < itemStock then
+                                        itemStock = num
+                                        isExplicitStock = true
+                                    end
                                 end
                             end
                         end
@@ -396,61 +418,51 @@ local function postDataToAPI()
 end
 
 -------------------------------------------------------------------------------
--- TÍNH GIÂY ĐỢI ĐẾN MỐC RESTOCK 5 PHÚT TIẾP THEO (THEO UTC)
--- Game restock vào mỗi mốc 5 phút chẵn theo UTC:
--- :00, :05, :10, :15, :20, :25, :30, :35, :40, :45, :50, :55
+-- TÍNH UNIX TIMESTAMP CỦA MỐC RESTOCK 5 PHÚT TIẾP THEO (UTC)
+-- Game restock mỗi mốc :00, :05, :10, :15, ... :55 theo UTC
+-- Dùng os.time() thay vì đếm ngược để KHÔNG bị drift từ task.wait()
 -------------------------------------------------------------------------------
-local function getSecondsUntilNextRestock()
-    local t = os.date("!*t")  -- Lấy thời gian UTC (dấu ! = UTC)
-    local secInMin  = t.sec         -- 0-59
-    local minInHour = t.min         -- 0-59
-    
+local function getNextRestockTimestamp()
+    local now = os.time()
     -- Số giây đã qua trong chu kỳ 5 phút hiện tại
-    local secIntoCycle = (minInHour % 5) * 60 + secInMin
-    
-    -- Số giây còn lại đến cuối chu kỳ
-    local remaining = 300 - secIntoCycle
-    
-    -- Trừ 1 giây để quét sớm hơn, bù đắp độ trễ script/network
-    remaining = remaining - 1
-    if remaining <= 0 then remaining = 300 end
-    
-    return remaining
+    local secIntoCycle = now % 300
+    -- Timestamp của mốc 5 phút tiếp theo, trừ 1 giây để bù latency
+    return now + (300 - secIntoCycle) - 1
+end
+
+-- Định dạng thời gian UTC để hiển thị
+local function fmtUTC(ts)
+    local t = os.date("!*t", ts)
+    return string.format("UTC %02d:%02d:%02d", t.hour, t.min, t.sec)
 end
 
 -------------------------------------------------------------------------------
--- VÒNG LẶP CHÍNH — THEO CHU KỲ RESTOCK UTC 5 PHÚT
+-- VÒNG LẶP CHÍNH — THEO TIMESTAMP TUYỆT ĐỐI, KHÔNG DRIFT
 -------------------------------------------------------------------------------
 task.spawn(function()
-    -- Tính thời điểm restock tiếp theo để hiển thị
-    local function nextRestockUTC()
-        local t = os.date("!*t")
-        local nextMin = (math.floor(t.min / 5) + 1) * 5
-        if nextMin >= 60 then nextMin = nextMin - 60 end
-        return string.format("UTC %02d:%02d:00", nextMin >= t.min and t.hour or (t.hour + 1) % 24, nextMin)
-    end
-    
-    print("[GHZ Script] 🚀 Bắt đầu trình lấy data (Timing-Sync Build 1.5)")
-    print("[GHZ Script] 🕐 Mốc restock tiếp theo: " .. nextRestockUTC())
+    print("[GHZ Script] 🚀 Bắt đầu trình lấy data (No-Drift Build 1.6)")
     
     -- Quét ngay lần đầu
     postDataToAPI()
     
     while true do
-        local waitTime = getSecondsUntilNextRestock()
+        -- Tính mốc thời gian tuyệt đối cho lần restock kế tiếp
+        local targetTs = getNextRestockTimestamp()
         
-        print(string.format("[GHZ Script] ⏳ Đợi %ds đến mốc restock kế tiếp...", waitTime))
+        print(string.format("[GHZ Script] ⏳ Restock kế tiếp lúc %s", fmtUTC(targetTs)))
         
-        -- Đếm ngược, cập nhật UI mỗi giây
-        for i = waitTime, 1, -1 do
-            local mins = math.floor(i / 60)
-            local secs = i % 60
+        -- Đợi đến mốc đó bằng cách so sánh os.time() thực tế
+        -- KHÔNG đếm ngược bằng i-- vì task.wait(1) hay bị drift
+        while os.time() < targetTs do
+            local remaining = targetTs - os.time()
+            local mins = math.floor(remaining / 60)
+            local secs = remaining % 60
             updateUI(
                 string.format("Status: ⏳ Restock trong %02d:%02d", mins, secs),
-                string.format("Mốc UTC tiếp: %s", nextRestockUTC()),
+                string.format("Tiếp theo: %s", fmtUTC(targetTs)),
                 Color3.fromRGB(180, 180, 255)
             )
-            task.wait(1)
+            task.wait(0.5)   -- Poll mỗi 0.5s để UI mượt, nhưng không ảnh hưởng timing
             if not screenGui or not screenGui.Parent then return end
         end
         
