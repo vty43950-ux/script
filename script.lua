@@ -129,13 +129,32 @@ local function extractNumber(text)
     return num and tonumber(num) or nil
 end
 
--- Hàm kiểm tra xem 1 text có giống "Giá Tiền" không (Ví dụ: "$100", "150 Coins")
+-- Kiểm tra text có phải giá tiền không (Garden Horizons dùng Shillings)
 local function isPriceOrMoney(text)
     local t = string.lower(text)
-    if string.match(t, "%$") or string.find(t, "coin") or string.find(t, "cash") or string.find(t, "gem") then
+    -- Từ khóa tiền tệ rõ ràng
+    if string.match(t, "%$") or string.find(t, "coin") or string.find(t, "cash")
+    or string.find(t, "gem") or string.find(t, "shilling") then
         return true
     end
+    -- Số lớn úm tròn (>= 500) rất có khả năng là giá tiền
+    local n = tonumber(string.match(text, "^%d+$"))
+    if n and n >= 500 then return true end
     return false
+end
+
+-- Trích xuất số NHẾ NHẤT trong một string (tránh nhầm số giá tiền lớn)
+local function extractSmallestNumber(text)
+    local smallest = nil
+    for n in string.gmatch(text, "%d+") do
+        local num = tonumber(n)
+        if num and num > 0 and num <= 999 then  -- Cập giới hạn hợp lý cho số lượng
+            if not smallest or num < smallest then
+                smallest = num
+            end
+        end
+    end
+    return smallest
 end
 
 local function scanUIForStock(guiLayer)
@@ -187,26 +206,24 @@ local function scanUIForStock(guiLayer)
         for _, text in ipairs(cardLabels) do
             local lowerText = string.lower(text)
             
-            -- TÌM STOCK: CHỈ chấp nhận nhãn CÓ CHỮ stock/left hoặc định dạng số đặc biệt
-            -- KHÔNG lấy số đứng mình (tránh bị nhầm giá tiền)
+            -- TÌM STOCK: Tìm nhãn có từ khóa stock/left/remain hoặc định dạng "Nx"/"xN"
             if not isPriceOrMoney(text) then
-                local num = extractNumber(text)
-                if num and num > 0 then
-                    local isStockLabel = string.find(lowerText, "stock") 
-                        or string.find(lowerText, "left")
-                        or string.find(lowerText, "remain")
-                        or string.match(text, "^%d+[xX]$")  -- "9x"
-                        or string.match(text, "^[xX]%d+$")  -- "x9"
-                        or string.match(text, "^%d+ stock") -- "9 stock" 
-                        or string.match(text, "^%d+ left")  -- "9 left"
-                    if isStockLabel then
+                local isStockLabel = string.find(lowerText, "stock") 
+                    or string.find(lowerText, "left")
+                    or string.find(lowerText, "remain")
+                    or string.match(text, "^%d+[xX]$")   -- "9x"
+                    or string.match(text, "^[xX]%d+$")   -- "x9"
+                if isStockLabel then
+                    -- Lấy số NHỎ NHẤT trong nhãn (tránh nhầm giá)
+                    local num = extractSmallestNumber(text)
+                    if num and num > 0 then
                         itemStock = num
                         isExplicitStock = true
                     end
                 end
             end
             
-            -- TÌM TÊN: Nhãn dài nhất không phải giá / số / tag
+            -- TÌM TÊN: Nhãn dài, không phải số, không phải tiền
             if not isPriceOrMoney(text) then
                 local isNumberLike = tonumber(text) 
                     or string.match(text, "^%d+[xX]$")
@@ -221,8 +238,28 @@ local function scanUIForStock(guiLayer)
             end
         end
         
-        -- Chỉ xét Mushroom với stock chuẩn (isExplicitStock), còn lại cũng cần stock chuẩn để tránh nhầm giá
-        if not isExplicitStock then return end
+        -- Nếu KHÔNG tìm thấy nhãn stock rõ ràng, thử tìm số nhỏ hợp lý (1-99)
+        -- Đây là fallback cho UI không có nhãn "Stock" tường minh
+        if not isExplicitStock then
+            for _, text in ipairs(cardLabels) do
+                if not isPriceOrMoney(text) then
+                    local lowerText = string.lower(text)
+                    local isStockTag = string.find(lowerText, "stock") or string.find(lowerText, "left")
+                    if not isStockTag then
+                        -- Tìm số nhỏ hợp lý (1-99) trong nhãn
+                        for n in string.gmatch(text, "%d+") do
+                            local num = tonumber(n)
+                            if num and num >= 1 and num <= 99 then
+                                if itemStock == -1 or num < itemStock then
+                                    itemStock = num
+                                    isExplicitStock = true
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
         if itemName == "" or itemStock <= 0 then return end
         
         -- Kiểm tra whitelist - Bỏ ngay nếu không khớp
@@ -359,19 +396,60 @@ local function postDataToAPI()
 end
 
 -------------------------------------------------------------------------------
--- VÒNG LẶP CHÍNH
+-- TÍNH GIÂY ĐỢI ĐẾN MỐC RESTOCK 5 PHÚT TIẾP THEO (THEO UTC)
+-- Game restock vào mỗi mốc 5 phút chẵn theo UTC:
+-- :00, :05, :10, :15, :20, :25, :30, :35, :40, :45, :50, :55
+-------------------------------------------------------------------------------
+local function getSecondsUntilNextRestock()
+    local t = os.date("!*t")  -- Lấy thời gian UTC (dấu ! = UTC)
+    local secInMin  = t.sec         -- 0-59
+    local minInHour = t.min         -- 0-59
+    
+    -- Số giây đã qua trong chu kỳ 5 phút hiện tại
+    local secIntoCycle = (minInHour % 5) * 60 + secInMin
+    
+    -- Số giây còn lại đến cuối chu kỳ
+    local remaining = 300 - secIntoCycle
+    
+    -- Trừ 1 giây để quét sớm hơn, bù đắp độ trễ script/network
+    remaining = remaining - 1
+    if remaining <= 0 then remaining = 300 end
+    
+    return remaining
+end
+
+-------------------------------------------------------------------------------
+-- VÒNG LẶP CHÍNH — THEO CHU KỲ RESTOCK UTC 5 PHÚT
 -------------------------------------------------------------------------------
 task.spawn(function()
-    print("[GHZ Script] 🚀 Bắt đầu trình lấy data (Reliability Build 1.4)")
+    -- Tính thời điểm restock tiếp theo để hiển thị
+    local function nextRestockUTC()
+        local t = os.date("!*t")
+        local nextMin = (math.floor(t.min / 5) + 1) * 5
+        if nextMin >= 60 then nextMin = nextMin - 60 end
+        return string.format("UTC %02d:%02d:00", nextMin >= t.min and t.hour or (t.hour + 1) % 24, nextMin)
+    end
     
+    print("[GHZ Script] 🚀 Bắt đầu trình lấy data (Timing-Sync Build 1.5)")
+    print("[GHZ Script] 🕐 Mốc restock tiếp theo: " .. nextRestockUTC())
+    
+    -- Quét ngay lần đầu
     postDataToAPI()
     
     while true do
         local waitTime = getSecondsUntilNextRestock()
-        if waitTime <= 0 then waitTime = 300 end
         
+        print(string.format("[GHZ Script] ⏳ Đợi %ds đến mốc restock kế tiếp...", waitTime))
+        
+        -- Đếm ngược, cập nhật UI mỗi giây
         for i = waitTime, 1, -1 do
-            updateUI(string.format("Status: ⏳ Đợi restock... (%ds)", i), nil, Color3.fromRGB(200, 200, 255))
+            local mins = math.floor(i / 60)
+            local secs = i % 60
+            updateUI(
+                string.format("Status: ⏳ Restock trong %02d:%02d", mins, secs),
+                string.format("Mốc UTC tiếp: %s", nextRestockUTC()),
+                Color3.fromRGB(180, 180, 255)
+            )
             task.wait(1)
             if not screenGui or not screenGui.Parent then return end
         end
@@ -379,8 +457,3 @@ task.spawn(function()
         postDataToAPI()
     end
 end)
-
-
-
-
-
