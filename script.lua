@@ -130,7 +130,7 @@ local function scanUIForStock(guiLayer)
         "harvested", "earned", "playtime", "shillings", "total", "level", "xp", 
         "balance", "owned", "shilling", "rank", "prestige", "quest", "inventory",
         "buy", "sell", "confirm", "close", "back", "next", "equip", "status", "v643",
-        "shilling", "money", "cash", "gems"
+        "shilling", "money", "cash", "gems", "claimed", "rewards"
     }
 
     -- Duyệt tìm các khung chứa (ScrollingFrame/Frame có layout)
@@ -164,8 +164,10 @@ local function scanUIForStock(guiLayer)
                             -- B. Kiểm tra ký tự đặc biệt (@, %)
                             if string.find(txt, "@") or string.find(txt, "%%") then isJunkCard = true end
                             
-                            -- C. Kiểm tra Hết hàng (NO STOCK / SOLD OUT)
-                            if string.find(ltxt, "no stock") or string.find(ltxt, "sold out") then isSoldOut = true end
+                            -- C. Kiểm tra Hết hàng (CỰC KỲ NGHIÊM NGẶT)
+                            if string.find(ltxt, "no stock") or string.find(ltxt, "sold out") or string.find(ltxt, "0 left") or string.find(ltxt, "0x") then 
+                                isSoldOut = true 
+                            end
                             
                             if isJunkCard or isSoldOut then break end
                             table.insert(cardLabels, txt)
@@ -184,7 +186,7 @@ local function scanUIForStock(guiLayer)
                     -- 2. PHÂN TÍCH DỮ LIỆU TRONG CARD HỢP LỆ
                     local itemName = ""
                     local itemStock = -1
-                    local isActuallyStock = false
+                    local isExplicitStock = false
                     
                     for _, text in ipairs(cardLabels) do
                         local lowerText = string.lower(text)
@@ -196,9 +198,9 @@ local function scanUIForStock(guiLayer)
                                 -- Nếu text chứa "stock", "left" hoặc định dạng "Nx" hoặc "xN" -> Đây là stock chuẩn
                                 if string.find(lowerText, "stock") or string.find(lowerText, "left") or string.match(text, "%d+[xX]") or string.match(text, "[xX]%s*%d+") then
                                     itemStock = num
-                                    isActuallyStock = true
+                                    isExplicitStock = true
                                 elseif itemStock == -1 then
-                                    -- Nếu chưa tìm thấy stock chuẩn, lấy tạm số đầu tiên thấy được (có thể là fallback nếu card không có chữ "Stock")
+                                    -- Nếu chưa tìm thấy stock chuẩn, lấy tạm số đầu tiên thấy được
                                     itemStock = num
                                 end
                             end
@@ -206,8 +208,8 @@ local function scanUIForStock(guiLayer)
                         
                         -- TÌM TÊN (Nhãn dài nhất không phải số/giá)
                         if not isPriceOrMoney(text) and not string.find(lowerText, "stock") and not string.find(lowerText, "left") then
-                            -- LỌC TÊN: Không được là số thuần túy (VD: "358") và độ dài > 2
-                            if not tonumber(text) and string.len(text) > 2 and not string.match(text, "^%d+[xX]$") and not string.match(text, "^[xX]%d+$") then
+                            -- LỌC TÊN: Không được là số thuần túy (VD: "358"), độ dài > 2, và không phải là tag số lượng (9x)
+                            if not tonumber(text) and string.len(text) > 2 and not string.match(text, "^%d+[xX]$") and not string.match(text, "^[xX]%s*%d+$") then
                                 if string.len(text) > string.len(itemName) and string.len(text) < 40 then
                                     itemName = text
                                 end
@@ -215,14 +217,19 @@ local function scanUIForStock(guiLayer)
                         end
                     end
                     
-                    -- 3. LƯU KẾT QUẢ
-                    if itemName ~= "" and itemStock > 0 and isActuallyStock and not results.foundTracker[itemName] then
+                    -- KIỂM TRA ĐẶC BIỆT CHO MUSHROOM (Tránh ghost stock)
+                    if string.find(string.lower(itemName), "mushroom") and not isExplicitStock then
+                        continue -- Bỏ qua nếu không thấy chữ Stock rõ ràng cho mushroom
+                    end
+
+                    -- 3. LƯU KẾT QUẢ (Nới lỏng: Chấp nhận cả khi không có 'isExplicitStock' nhưng có itemName và itemStock > 0)
+                    if itemName ~= "" and itemStock > 0 and not results.foundTracker[itemName] then
                         local cat = guessItemCategory(itemName)
                         table.insert(cat == "seed" and results.seeds or results.gear, {
                             name = itemName,
                             quantity = itemStock,
                             category = cat,
-                            image = itemImage -- Thêm ảnh vào payload (Roblox Asset ID)
+                            image = itemImage
                         })
                         results.foundTracker[itemName] = true
                     end
@@ -244,24 +251,32 @@ local function getGardenHorizonsData()
     
     local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
     
-    updateUI("Status: 🔍 Đang lọc Stock (>0)...", nil, Color3.fromRGB(255, 200, 100))
+    updateUI("Status: 🔍 Đang quét dữ liệu...", nil, Color3.fromRGB(255, 200, 100))
     
     pcall(function()
-        -- 1. Weather scan (giữ nguyên vì logic này khá ổn)
-        local wKeywords = {"starfall", "storm", "clear", "rain", "sunny", "meteor"}
+        -- 1. Weather scan (Mở rộng từ khóa)
+        local wKeywords = {"starfall", "storm", "clear", "rain", "sunny", "meteor", "mowis", "cloudy", "windy", "snow"}
         for _, kw in ipairs(wKeywords) do
             local wLabel = findTextLabelWithKeyword(PlayerGui, kw)
             if wLabel then
                 weather.status = (kw:gsub("^%l", string.upper)) 
+                
+                -- Tìm thời gian xung quanh label đó
                 local parentUI = wLabel.Parent
-                for _, sibling in pairs(parentUI:GetChildren()) do
-                    if sibling:IsA("TextLabel") and sibling ~= wLabel then
-                        local m, s = sibling.Text:match("(%d+):(%d+)")
-                        if m and s then weather.duration = (tonumber(m) * 60) + tonumber(s) break end
-                        local numsec = sibling.Text:match("(%d+)s")
-                        if numsec then weather.duration = tonumber(numsec) break end
+                -- Quét rộng hơn để tìm thời gian
+                local function findDuration(root)
+                    for _, child in pairs(root:GetDescendants()) do
+                        if child:IsA("TextLabel") then
+                            local txt = child.Text
+                            local m, s = string.match(txt, "(%d+):(%d+)")
+                            if m and s then return (tonumber(m) * 60) + tonumber(s) end
+                            local numsec = string.match(txt, "(%d+)s")
+                            if numsec then return tonumber(numsec) end
+                        end
                     end
                 end
+                
+                weather.duration = findDuration(parentUI) or findDuration(PlayerGui:FindFirstChild("Main") or PlayerGui) or 0
                 break
             end
         end
@@ -273,7 +288,7 @@ local function getGardenHorizonsData()
     local infoStr = string.format("Data: %d Hạt, %d Đồ (Đã lọc)\nWeather: %s (%ds)", #seeds, #gear, weather.status, weather.duration)
     updateUI("Status: ✅ Đã lọc xong!", infoStr, Color3.fromRGB(130, 255, 130))
     
-    print(string.format("[GHZ Scanner] ✅ Hoàn tất! Lọc thành công Stock thực: Seeds: %d, Gears: %d | Thời Tiết: %s (%ds)", #seeds, #gear, weather.status, weather.duration))
+    print(string.format("[GHZ Scanner] ✅ Hoàn tất! Stock: Seeds: %d, Gears: %d | Weather: %s (%ds)", #seeds, #gear, weather.status, weather.duration))
     return seeds, gear, weather
 end
 
@@ -284,8 +299,8 @@ local function postDataToAPI()
     local seeds, gear, weather = getGardenHorizonsData()
     
     if #seeds == 0 and #gear == 0 and weather.status == "None" then
-        warn("[GHZ Script] ⚠️ Auto-scan không tìm thấy Data trên màn hình!")
-        updateUI("Status: ⚠️ Không tìm thấy Shop UI!", nil, Color3.fromRGB(255, 100, 100))
+        print("[GHZ Script] ⚠️ Cảnh báo: Không tìm thấy dữ liệu nào để gửi.")
+        updateUI("Status: ⚠️ Không tìm thấy Shop UI!", "Đảm bảo bạn đã mở Shop hoặc UI Shop đang hiện.", Color3.fromRGB(255, 100, 100))
         return 
     end
     
@@ -297,7 +312,6 @@ local function postDataToAPI()
     }
     
     local jsonData = HttpService:JSONEncode(payload)
-    
     local req = (syn and syn.request) or (http and http.request) or request
     
     if req then
@@ -305,9 +319,7 @@ local function postDataToAPI()
             return req({
                 Url = API_URL,
                 Method = "POST",
-                Headers = {
-                    ["Content-Type"] = "application/json"
-                },
+                Headers = { ["Content-Type"] = "application/json" },
                 Body = jsonData
             })
         end)
@@ -317,21 +329,20 @@ local function postDataToAPI()
                 print("[GHZ Script] ✅ Cập nhật API thành công lúc " .. os.date("%H:%M:%S"))
                 updateUI("Status: ✅ Đã Up API thành công", nil, Color3.fromRGB(150, 255, 150))
             else
-                warn("[GHZ Script] ❌ Lỗi sever/API:", response.StatusCode, response.Body)
-                updateUI("Status: ❌ Lỗi Server API", nil, Color3.fromRGB(255, 100, 100))
+                print("[GHZ Script] ❌ Server trả về lỗi: " .. tostring(response.StatusCode) .. " - " .. tostring(response.Body))
+                updateUI("Status: ❌ Lỗi Server API", "Mã lỗi: " .. tostring(response.StatusCode), Color3.fromRGB(255, 100, 100))
             end
         else
-            warn("[GHZ Script] ❌ Thất bại khi gửi request:", response)
+            print("[GHZ Script] ❌ Thất bại khi kết nối tới Server. Kiểm tra lại API_URL.")
             updateUI("Status: ❌ Request thất bại", nil, Color3.fromRGB(255, 100, 100))
         end
     else
-        warn("[GHZ Script] ❌ Executor của bạn (Delta) bị thiếu hàm request!")
-        updateUI("Status: ❌ Delta thiếu hàm request()", nil, Color3.fromRGB(255, 50, 50))
+        print("[GHZ Script] ❌ Lỗi: Executor không hỗ trợ request.")
     end
 end
 
 -------------------------------------------------------------------------------
--- LOGIC TÍNH CHU KỲ 5 PHÚT (VD 19:05, 19:10)
+-- LOGIC TÍNH CHU KỲ 5 PHÚT (FIX TIMING TRỄ)
 -------------------------------------------------------------------------------
 local function getSecondsUntilNextRestock()
     local timeT = os.date("*t")
@@ -341,31 +352,34 @@ local function getSecondsUntilNextRestock()
     local minutesToNext = 5 - (currentMin % 5)
     local secondsToNext = (minutesToNext * 60) - currentSec
     
-    return secondsToNext
+    -- Trừ đi 1 giây để quét sớm hơn, bù đắp độ trễ script/network
+    local delaySync = secondsToNext - 1
+    if delaySync <= 0 then delaySync = 300 end
+    return delaySync
 end
 
 -------------------------------------------------------------------------------
 -- VÒNG LẶP CHẠY THEO CHU KỲ RESTOCK MẶC ĐỊNH
 -------------------------------------------------------------------------------
 task.spawn(function()
-    print("[GHZ Script] 🚀 Bắt đầu trình lấy data cho Garden Horizons (Chu kỳ 5 phút - Chế độ Auto-Scan)")
+    print("[GHZ Script] 🚀 Bắt đầu trình lấy data cho Garden Horizons (Bản sửa lỗi 1.3 - Reliability Fix)")
     
+    -- Gửi dữ liệu ngay lập tức khi chạy script
     postDataToAPI()
     
     while true do
         local waitTime = getSecondsUntilNextRestock()
         
-        -- Đếm ngược giây cho đẹp mắt lồng vào UI
+        -- Đếm ngược giây cho lồng vào UI
         for i = waitTime, 1, -1 do
-            local nextScanTime = os.date("%H:%M:%S", os.time() + i)
             updateUI(string.format("Status: ⏳ Đợi restock... (%ds)", i), nil, Color3.fromRGB(200, 200, 255))
             task.wait(1)
-            -- Phá vỡ vòng lặp đếm ngược nếu UI bị xóa (người dùng tắt script)
             if not screenGui or not screenGui.Parent then return end
         end
         
         postDataToAPI()
     end
 end)
+
 
 
