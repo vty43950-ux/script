@@ -6,7 +6,7 @@ local CoreGui = game:GetService("CoreGui")
 local LocalPlayer = Players.LocalPlayer
 
 -- API URL CỦA BẠN 
-local API_URL = "https://zenithghz.qzz.io/api/update"
+local API_URL = "https://zenithghz.indevs.in/api/update"
 
 -------------------------------------------------------------------------------
 -- GIAO DIỆN (UI) THÔNG BÁO CHO NGƯỜI DÙNG
@@ -367,4 +367,5 @@ task.spawn(function()
         postDataToAPI()
     end
 end)
+
 
