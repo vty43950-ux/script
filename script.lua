@@ -31,7 +31,6 @@ local infoLabel = Instance.new("TextLabel", frame)
 infoLabel.Position = UDim2.new(0,0,0,30)
 infoLabel.Size = UDim2.new(1,0,1,-30)
 infoLabel.BackgroundTransparency = 1
-infoLabel.Text = ""
 
 local function updateUI(status, info)
     statusLabel.Text = status
@@ -41,51 +40,63 @@ end
 -------------------------------------------------------------------------------
 -- CONFIG
 -------------------------------------------------------------------------------
-local SEED_NAMES = {
-    "mushroom","carrot","corn","pumpkin","apple","bamboo"
-}
-
-local GEAR_NAMES = {
-    "sprinkler","shovel","tool","watering","trowel"
-}
-
--- ❌ BLACKLIST rác
-local BLACKLIST_ITEMS = {
-    "fertile soil","soil","reward","bonus","xp","level",
-    "quest","daily","free","crate","pack","bundle"
+local BLACKLIST = {
+    "fertile soil","soil","reward","xp","level","quest","free","bonus"
 }
 
 local function isBlacklisted(name)
     local n = string.lower(name)
-    for _,b in ipairs(BLACKLIST_ITEMS) do
+    for _,b in ipairs(BLACKLIST) do
         if string.find(n,b) then
             return true
         end
     end
 end
 
-local function guessItemCategory(name)
-    local n = string.lower(name)
+-------------------------------------------------------------------------------
+-- WEATHER SCAN
+-------------------------------------------------------------------------------
+local function scanWeather()
+    local weather = {
+        status = "None",
+        duration = 0
+    }
 
-    for _,v in ipairs(SEED_NAMES) do
-        if string.find(n,v) then return "seed" end
+    local keywords = {
+        "rain","storm","sunny","cloudy","windy","snow","meteor","starfall"
+    }
+
+    for _,obj in pairs(LocalPlayer.PlayerGui:GetDescendants()) do
+        if obj:IsA("TextLabel") then
+            local txt = string.lower(obj.Text)
+
+            for _,kw in ipairs(keywords) do
+                if string.find(txt, kw) then
+                    weather.status = kw
+
+                    -- tìm duration
+                    local m,s = string.match(obj.Text, "(%d+):(%d+)")
+                    if m and s then
+                        weather.duration = tonumber(m)*60 + tonumber(s)
+                    end
+
+                    return weather
+                end
+            end
+        end
     end
 
-    for _,v in ipairs(GEAR_NAMES) do
-        if string.find(n,v) then return "gear" end
-    end
+    return weather
 end
 
 -------------------------------------------------------------------------------
--- SCAN (FIXED)
+-- SCAN SHOP (FIXED MUSHROOM)
 -------------------------------------------------------------------------------
 local function scan()
     local seeds, gear = {}, {}
     local seen = {}
 
     local function process(item)
-        if not item:IsA("Frame") then return end
-
         local texts = {}
         local name = ""
         local stock = nil
@@ -102,7 +113,7 @@ local function scan()
             local l = string.lower(t)
 
             -------------------------------------------------------------------
-            -- ✅ CHỈ lấy stock khi có keyword thật
+            -- ✅ CHỈ lấy stock khi có keyword (FIX X5)
             -------------------------------------------------------------------
             if string.find(l,"stock") 
             or string.find(l,"left") 
@@ -115,32 +126,26 @@ local function scan()
             end
 
             -------------------------------------------------------------------
-            -- name (text dài nhất hợp lý)
+            -- NAME
             -------------------------------------------------------------------
             if #t > #name 
             and not tonumber(t)
-            and not string.find(l,"stock")
-            and not string.find(l,"left") then
+            and not string.find(l,"stock") then
                 name = t
             end
         end
 
-        -----------------------------------------------------------------------
-        -- ❌ bỏ nếu không có stock rõ ràng (fix x5 bug)
-        -----------------------------------------------------------------------
+        -- ❌ không có stock → bỏ
         if not stock then return end
 
-        -----------------------------------------------------------------------
-        -- ❌ blacklist (fix fertile soil)
-        -----------------------------------------------------------------------
+        -- ❌ chặn mushroom bug x5
+        if string.find(string.lower(name),"mushroom") and stock == 5 then
+            return
+        end
+
+        -- ❌ blacklist
         if isBlacklisted(name) then return end
 
-        local cat = guessItemCategory(name)
-        if not cat then return end
-
-        -----------------------------------------------------------------------
-        -- chống duplicate
-        -----------------------------------------------------------------------
         local key = name.."_"..stock
         if seen[key] then return end
         seen[key] = true
@@ -150,15 +155,16 @@ local function scan()
             quantity = stock
         }
 
-        if cat == "seed" then
-            table.insert(seeds, data)
+        -- phân loại đơn giản
+        if string.find(string.lower(name),"seed") then
+            table.insert(seeds,data)
         else
-            table.insert(gear, data)
+            table.insert(gear,data)
         end
     end
 
     ---------------------------------------------------------------------------
-    -- ✅ CHỈ scan container có layout (shop thật)
+    -- ✅ chỉ scan SHOP thật (có layout)
     ---------------------------------------------------------------------------
     for _,container in pairs(LocalPlayer.PlayerGui:GetDescendants()) do
         if (container:IsA("Frame") or container:IsA("ScrollingFrame")) then
@@ -177,14 +183,15 @@ local function scan()
 end
 
 -------------------------------------------------------------------------------
--- API
+-- API SEND
 -------------------------------------------------------------------------------
 local function send()
     updateUI("🔍 Scanning...")
 
     local seeds, gear = scan()
+    local weather = scanWeather()
 
-    if #seeds == 0 and #gear == 0 then
+    if #seeds == 0 and #gear == 0 and weather.status == "None" then
         updateUI("⚠️ No data", "Open Shop!")
         return
     end
@@ -192,6 +199,7 @@ local function send()
     local payload = {
         seeds = seeds,
         gear = gear,
+        weather = weather,
         timestamp = os.time()
     }
 
@@ -208,7 +216,11 @@ local function send()
         end)
     end
 
-    updateUI("✅ Done", "Seeds: "..#seeds.." | Gear: "..#gear)
+    updateUI("✅ Done",
+        "Seeds: "..#seeds..
+        " | Gear: "..#gear..
+        "\nWeather: "..weather.status
+    )
 end
 
 -------------------------------------------------------------------------------
