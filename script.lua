@@ -7,23 +7,22 @@ local LocalPlayer = Players.LocalPlayer
 local API_URL = "https://zenithghz.qzz.io/api/update"
 
 -------------------------------------------------------------------------------
--- CONFIG & WHITELISTS
+-- CONFIG & WHITELISTS (WIKI UPDATED)
 -------------------------------------------------------------------------------
 local SEED_WHITELIST = {
-    "carrot", "corn", "onion", "potato", "tomato", "strawberry", "blueberry",
-    "grape", "wheat", "pumpkin", "watermelon", "mushroom", "apple", "orange",
-    "lemon", "cherry", "pear", "pineapple", "coconut", "mango", "peach",
-    "pepper", "eggplant", "sunflower", "bamboo", "cactus", "rose", "tulip",
-    "lily", "daisy", "orchid", "lavender", "beanstalk", "dragonfruit",
-    "seed" -- Fix categorization
+    -- Standard
+    "carrot", "corn", "onion", "strawberry", "mushroom", "beetroot", "tomato", 
+    "apple", "rose", "wheat", "banana", "plum", "potato", "cabbage", "cherry", 
+    "bamboo", "mango", "pineapple", "watermelon", "carrot seed", "corn seed", "onion seed", "strawberry seed", "mushroom seed", "beetroot seed", "tomato seed", 
+    "apple seed", "rose seed", "wheat seed", "banana seed", "plum seed", "potato seed", "cabbage seed", "cherry seed", 
+    "bamboo seed", "mango seed", "pineapple seed", "watermelon seed"
 }
 
 local GEAR_WHITELIST = {
-    "basic sprinkler", "advanced sprinkler", "godly sprinkler",
-    "super sprinkler", "ultra sprinkler",
-    "watering can", "trowel", "shovel", "scythe", "hoe", "rake",
-    "reverter", "favorite tool", "recall wrench",
-    "basket"
+    "watering can", "basic sprinkler", "harvest bell", "turbo sprinkler",
+    "favorite tool", "super sprinkler", "trowel", "harvest hand",
+    "godly sprinkler", "ultra sprinkler", "shovel", "scythe", "hoe", "rake",
+    "reverter", "recall wrench"
 }
 
 local STRICT_ITEMS = { "mushroom" }
@@ -55,7 +54,7 @@ local statusLabel = Instance.new("TextLabel")
 statusLabel.Size = UDim2.new(1, -20, 0, 30)
 statusLabel.Position = UDim2.new(0, 10, 0, 5)
 statusLabel.BackgroundTransparency = 1
-statusLabel.Text = "🌱 GHZ Tracker v2.0"
+statusLabel.Text = "🌱 GHZ Tracker v2.1"
 statusLabel.TextColor3 = Color3.fromRGB(150, 255, 150)
 statusLabel.Font = Enum.Font.GothamBold
 statusLabel.TextSize = 14
@@ -100,7 +99,7 @@ local function extractQty(text)
 end
 
 -------------------------------------------------------------------------------
--- SCANNING
+-- SCANNING CORE (ENHANCED v2.1)
 -------------------------------------------------------------------------------
 local function scanAll()
     local seeds, gear = {}, {}
@@ -115,11 +114,12 @@ local function scanAll()
             for _, kw in ipairs(wKeywords) do
                 if string.find(t, kw) then
                     weather.status = obj.Text
-                    -- Try to find duration in parent
-                    for _, d in pairs(obj.Parent:GetChildren()) do
-                        if d:IsA("TextLabel") and string.find(d.Text, ":") then
+                    -- Try to find duration (00:00) in same container
+                    local root = obj.Parent
+                    for _, d in pairs(root:GetDescendants()) do
+                        if d:IsA("TextLabel") and d.Visible and string.find(d.Text, ":") then
                             local m, s = string.match(d.Text, "(%d+):(%d+)")
-                            if m and s then weather.duration = tonumber(m)*60 + tonumber(s) end
+                            if m and s then weather.duration = tonumber(m)*60 + tonumber(s) break end
                         end
                     end
                     break
@@ -128,66 +128,59 @@ local function scanAll()
         end
     end
 
-    -- Scan Shop
-    local BLACKLIST = {"level", "owned", "rank", "prestige", "quest", "inventory", "shop"}
-    for _, container in pairs(PlayerGui:GetDescendants()) do
-        if (container:IsA("ScrollingFrame") or container:IsA("Frame")) and 
-           (container:FindFirstChildWhichIsA("UIGridLayout") or container:FindFirstChildWhichIsA("UIListLayout")) then
+    -- Scan Shop Items
+    for _, obj in pairs(PlayerGui:GetDescendants()) do
+        if obj:IsA("TextLabel") and obj.Visible and string.len(obj.Text) > 3 then
+            local rawName = obj.Text
+            local lowName = string.lower(rawName)
             
-            for _, card in pairs(container:GetChildren()) do
-                if card:IsA("GuiObject") and #card:GetChildren() > 2 then
-                    local labels = {}
-                    local img = ""
-                    local junk = false
-                    
-                    for _, c in pairs(card:GetDescendants()) do
-                        if c:IsA("TextLabel") and c.Visible and c.Text ~= "" then
-                            local lt = string.lower(c.Text)
-                            for _, b in ipairs(BLACKLIST) do if string.find(lt, b) then junk = true break end end
-                            table.insert(labels, c.Text)
-                        elseif c:IsA("ImageLabel") and img == "" then
-                            local id = string.match(c.Image, "%d+")
-                            if id then img = "https://www.roblox.com/asset-thumbnail/image?assetId=" .. id .. "&width=420&height=420&format=png" end
-                        end
+            -- Check if this is an item name
+            local cat = nil
+            for _, s in ipairs(SEED_WHITELIST) do if string.find(lowName, s) then cat = "seed" break end end
+            if not cat then for _, g in ipairs(GEAR_WHITELIST) do if string.find(lowName, g) then cat = "gear" break end end end
+            
+            if cat and not seen[rawName] then
+                -- Broad search for Card (find the container that holds both name and info)
+                local card = obj.Parent
+                if card:IsA("Frame") or card:IsA("ImageLabel") or card:IsA("TextButton") then
+                    -- If the parent is just a small wrapper, look one level higher
+                    if card.Parent and (card.Parent:IsA("Frame") or card.Parent:IsA("ScrollingFrame")) then
+                        card = card.Parent
                     end
-                    
-                    if not junk and #labels >= 2 then
-                        local name, qty = "", nil
-                        -- Find Name
-                        for _, l in ipairs(labels) do
-                            if not isPrice(l) and not tonumber(l) and string.len(l) > 3 then
-                                if string.len(l) > string.len(name) then name = l end
-                            end
-                        end
-                        -- Find Qty
-                        for _, l in ipairs(labels) do
-                            local q = extractQty(l)
-                            if q then qty = q break end
-                        end
-                        -- Fallback Qty
-                        local isStrictItem = false
-                        for _, s in ipairs(STRICT_ITEMS) do if string.find(string.lower(name), s) then isStrictItem = true break end end
-                        
-                        if not qty and not isStrictItem then
-                            for _, l in ipairs(labels) do
-                                local n = tonumber(string.match(l, "^%d+$"))
-                                if n and n > 0 and n < 100 then qty = n break end
-                            end
-                        end
-                        
-                        if name ~= "" and qty and not seen[name] then
-                            seen[name] = true
-                            local cat = nil
-                            local ln = string.lower(name)
-                            for _, s in ipairs(SEED_WHITELIST) do if string.find(ln, s) then cat = "seed" break end end
-                            if not cat then for _, g in ipairs(GEAR_WHITELIST) do if string.find(ln, g) then cat = "gear" break end end end
-                            
-                            if cat then
-                                local entry = {name = name, quantity = qty, category = cat, image = img}
-                                if cat == "seed" then table.insert(seeds, entry) else table.insert(gear, entry) end
-                            end
-                        end
+                end
+                
+                local qty = nil
+                local img = ""
+                local labels = {}
+                
+                -- Look inside the card and its children for info
+                for _, child in pairs(card:GetDescendants()) do
+                    if child:IsA("TextLabel") and child.Visible and child.Text ~= "" then
+                        table.insert(labels, child.Text)
+                        local q = extractQty(child.Text)
+                        if q then qty = q end
+                    elseif child:IsA("ImageLabel") and child.Visible and img == "" then
+                        local id = string.match(child.Image, "%d+")
+                        if id then img = "https://www.roblox.com/asset-thumbnail/image?assetId=" .. id .. "&width=420&height=420&format=png" end
                     end
+                end
+                
+                -- Fallback for non-strict items (just look for a small number)
+                local isStrictItem = false
+                for _, s in ipairs(STRICT_ITEMS) do if string.find(lowName, s) then isStrictItem = true break end end
+                
+                if not qty and not isStrictItem then
+                    for _, l in ipairs(labels) do
+                        local n = tonumber(string.match(l, "^%d+$"))
+                        if n and n > 0 and n < 100 then qty = n break end
+                    end
+                end
+                
+                if qty then
+                    seen[rawName] = true
+                    local entry = {name = rawName, quantity = qty, category = cat, image = img}
+                    if cat == "seed" then table.insert(seeds, entry) else table.insert(gear, entry) end
+                    print("[GHZ] Found " .. cat .. ": " .. rawName .. " (x" .. qty .. ")")
                 end
             end
         end
@@ -200,11 +193,17 @@ end
 -- MAIN LOOP
 -------------------------------------------------------------------------------
 local function post()
-    updateUI(nil, "Status: Scanning Shop...", Color3.fromRGB(255, 200, 100))
-    local seeds, gear, weather = scanAll()
+    updateUI(nil, "Status: Scanning...", Color3.fromRGB(255, 200, 100))
+    local ok, seeds, gear, weather = pcall(scanAll)
+    
+    if not ok then
+        updateUI(nil, "Status: Scan Error!", Color3.fromRGB(255, 0, 0))
+        warn("[GHZ] Scan Error: " .. tostring(seeds))
+        return
+    end
     
     if #seeds == 0 and #gear == 0 then
-        updateUI(nil, "Status: No Shop Open!", Color3.fromRGB(255, 100, 100))
+        updateUI(nil, "Status: No Items Found", Color3.fromRGB(180, 180, 180))
         return
     end
 
@@ -220,8 +219,7 @@ local function post()
             Body = HttpService:JSONEncode(payload)
         })
     end)
-    updateUI(nil, "Status: API Updated!", Color3.fromRGB(150, 255, 150))
-    print("[GHZ] Posted " .. #seeds + #gear .. " items.")
+    updateUI(nil, "Status: API Post Success!", Color3.fromRGB(130, 255, 130))
 end
 
 task.spawn(function()
