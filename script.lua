@@ -15,7 +15,7 @@ local SEED_WHITELIST = {
     "lemon", "cherry", "pear", "pineapple", "coconut", "mango", "peach",
     "pepper", "eggplant", "sunflower", "bamboo", "cactus", "rose", "tulip",
     "lily", "daisy", "orchid", "lavender", "beanstalk", "dragonfruit",
-    "seed", "sprout", "fertile soil" -- Fix categorization
+    "seed" -- Fix categorization
 }
 
 local GEAR_WHITELIST = {
@@ -23,7 +23,7 @@ local GEAR_WHITELIST = {
     "super sprinkler", "ultra sprinkler",
     "watering can", "trowel", "shovel", "scythe", "hoe", "rake",
     "reverter", "favorite tool", "recall wrench",
-    "harvest hand", "basket", "pitchfork"
+    "basket"
 }
 
 local STRICT_ITEMS = { "mushroom" }
