@@ -1,36 +1,65 @@
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CoreGui = game:GetService("CoreGui")
-
 local LocalPlayer = Players.LocalPlayer
+
 local API_URL = "https://zenithghz.qzz.io/api/update"
 
 -------------------------------------------------------------------------------
--- UI
+-- UI (GIỮ NGUYÊN)
 -------------------------------------------------------------------------------
-local uiLayer = (gethui and gethui()) or CoreGui
+local uiLayer = (gethui and gethui()) or CoreGui:FindFirstChild("RobloxGui") or CoreGui
 
 if uiLayer:FindFirstChild("GHZ_Tracker_UI") then
     uiLayer["GHZ_Tracker_UI"]:Destroy()
 end
 
-local screenGui = Instance.new("ScreenGui", uiLayer)
+local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "GHZ_Tracker_UI"
+screenGui.ResetOnSpawn = false
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screenGui.Parent = uiLayer
 
-local frame = Instance.new("Frame", screenGui)
-frame.Size = UDim2.new(0, 260, 0, 110)
-frame.Position = UDim2.new(0, 10, 0, 10)
-frame.BackgroundColor3 = Color3.fromRGB(25,25,25)
+local mainFrame = Instance.new("Frame")
+mainFrame.Size = UDim2.new(0, 250, 0, 100)
+mainFrame.Position = UDim2.new(0, 10, 0, 10)
+mainFrame.BackgroundColor3 = Color3.fromRGB(30,30,30)
+mainFrame.BackgroundTransparency = 0.2
+mainFrame.Parent = screenGui
 
-local statusLabel = Instance.new("TextLabel", frame)
-statusLabel.Size = UDim2.new(1,0,0,30)
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Size = UDim2.new(1,0,0,30)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = "🌱 GHZ Auto-Tracker"
+titleLabel.TextColor3 = Color3.fromRGB(150,255,150)
+titleLabel.Font = Enum.Font.GothamBold
+titleLabel.TextSize = 14
+titleLabel.Parent = mainFrame
+
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Position = UDim2.new(0,10,0,30)
+statusLabel.Size = UDim2.new(1,-20,0,25)
 statusLabel.BackgroundTransparency = 1
-statusLabel.Text = "Loading..."
+statusLabel.Text = "Status: Loading..."
+statusLabel.TextColor3 = Color3.fromRGB(255,255,255)
+statusLabel.Font = Enum.Font.Gotham
+statusLabel.TextSize = 12
+statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+statusLabel.Parent = mainFrame
 
-local infoLabel = Instance.new("TextLabel", frame)
-infoLabel.Position = UDim2.new(0,0,0,30)
-infoLabel.Size = UDim2.new(1,0,1,-30)
+local infoLabel = Instance.new("TextLabel")
+infoLabel.Position = UDim2.new(0,10,0,55)
+infoLabel.Size = UDim2.new(1,-20,0,40)
 infoLabel.BackgroundTransparency = 1
+infoLabel.Text = ""
+infoLabel.TextColor3 = Color3.fromRGB(200,200,200)
+infoLabel.Font = Enum.Font.Gotham
+infoLabel.TextSize = 11
+infoLabel.TextXAlignment = Enum.TextXAlignment.Left
+infoLabel.TextYAlignment = Enum.TextYAlignment.Top
+infoLabel.Parent = mainFrame
 
 local function updateUI(status, info)
     statusLabel.Text = status
@@ -38,32 +67,98 @@ local function updateUI(status, info)
 end
 
 -------------------------------------------------------------------------------
--- CONFIG
+-- FIX CORE
 -------------------------------------------------------------------------------
-local BLACKLIST = {
-    "fertile soil","soil","reward","xp","level","quest","free","bonus"
-}
 
-local function isBlacklisted(name)
-    local n = string.lower(name)
-    for _,b in ipairs(BLACKLIST) do
-        if string.find(n,b) then
-            return true
+local function extractSmallestNumber(text)
+    local smallest = nil
+    for n in string.gmatch(text, "%d+") do
+        local num = tonumber(n)
+
+        -- 🔥 FIX: loại số 5 fake
+        if num and num > 0 and num <= 999 and num ~= 5 then
+            if not smallest or num < smallest then
+                smallest = num
+            end
         end
     end
+    return smallest
 end
 
 -------------------------------------------------------------------------------
--- WEATHER SCAN
+-- SCAN UI (GIỮ NGUYÊN LOGIC, CHỈ FIX NHẸ)
+-------------------------------------------------------------------------------
+local function scanUI()
+    local seeds = {}
+    local gear = {}
+    local found = {}
+
+    for _,obj in pairs(LocalPlayer.PlayerGui:GetDescendants()) do
+        if obj:IsA("Frame") then
+            local texts = {}
+            local name = ""
+            local stock = -1
+
+            for _,child in pairs(obj:GetDescendants()) do
+                if child:IsA("TextLabel") and child.Text ~= "" then
+                    table.insert(texts, child.Text)
+                end
+            end
+
+            for _,text in ipairs(texts) do
+                local lower = string.lower(text)
+
+                -- 🔥 FIX: bỏ x5 / 5x
+                local isStock = string.find(lower,"stock")
+                    or string.find(lower,"left")
+                    or string.find(lower,"remain")
+
+                if isStock then
+                    local num = extractSmallestNumber(text)
+                    if num and num > 0 then
+                        stock = num
+                    end
+                end
+
+                if #text > #name and not tonumber(text) then
+                    name = text
+                end
+            end
+
+            if name ~= "" and stock > 0 then
+
+                -- 🔥 FIX: chặn mushroom bug
+                if string.find(string.lower(name),"mushroom") and stock == 5 then
+                    continue
+                end
+
+                if not found[name] then
+                    found[name] = true
+
+                    local data = {name=name, quantity=stock}
+
+                    if string.find(string.lower(name),"seed") then
+                        table.insert(seeds,data)
+                    else
+                        table.insert(gear,data)
+                    end
+                end
+            end
+        end
+    end
+
+    return seeds, gear
+end
+
+-------------------------------------------------------------------------------
+-- WEATHER FIX
 -------------------------------------------------------------------------------
 local function scanWeather()
-    local weather = {
-        status = "None",
-        duration = 0
-    }
+    local weather = {status="None",duration=0}
 
     local keywords = {
-        "rain","storm","sunny","cloudy","windy","snow","meteor","starfall"
+        "starfall","meteor","storm","rain","thunder",
+        "sunny","clear","cloudy","windy","snow","blizzard"
     }
 
     for _,obj in pairs(LocalPlayer.PlayerGui:GetDescendants()) do
@@ -74,11 +169,15 @@ local function scanWeather()
                 if string.find(txt, kw) then
                     weather.status = kw
 
-                    -- tìm duration
-                    local m,s = string.match(obj.Text, "(%d+):(%d+)")
+                    local m,s = string.match(obj.Text,"(%d+):(%d+)")
                     if m and s then
                         weather.duration = tonumber(m)*60 + tonumber(s)
                     end
+
+                    local sec = string.match(obj.Text,"(%d+)%s*s")
+                        or string.match(obj.Text,"(%d+)%s*sec")
+
+                    if sec then weather.duration = tonumber(sec) end
 
                     return weather
                 end
@@ -90,111 +189,13 @@ local function scanWeather()
 end
 
 -------------------------------------------------------------------------------
--- SCAN SHOP (FIXED MUSHROOM)
--------------------------------------------------------------------------------
-local function scan()
-    local seeds, gear = {}, {}
-    local seen = {}
-
-    local function process(item)
-        local texts = {}
-        local name = ""
-        local stock = nil
-
-        for _,v in pairs(item:GetDescendants()) do
-            if v:IsA("TextLabel") and v.Visible and v.Text ~= "" then
-                table.insert(texts, v.Text)
-            end
-        end
-
-        if #texts == 0 then return end
-
-        for _,t in ipairs(texts) do
-            local l = string.lower(t)
-
-            -------------------------------------------------------------------
-            -- ✅ CHỈ lấy stock khi có keyword (FIX X5)
-            -------------------------------------------------------------------
-            if string.find(l,"stock") 
-            or string.find(l,"left") 
-            or string.find(l,"remain") then
-
-                local num = tonumber(string.match(t,"%d+"))
-                if num and num > 0 and num <= 100 then
-                    stock = num
-                end
-            end
-
-            -------------------------------------------------------------------
-            -- NAME
-            -------------------------------------------------------------------
-            if #t > #name 
-            and not tonumber(t)
-            and not string.find(l,"stock") then
-                name = t
-            end
-        end
-
-        -- ❌ không có stock → bỏ
-        if not stock then return end
-
-        -- ❌ chặn mushroom bug x5
-        if string.find(string.lower(name),"mushroom") and stock == 5 then
-            return
-        end
-
-        -- ❌ blacklist
-        if isBlacklisted(name) then return end
-
-        local key = name.."_"..stock
-        if seen[key] then return end
-        seen[key] = true
-
-        local data = {
-            name = name,
-            quantity = stock
-        }
-
-        -- phân loại đơn giản
-        if string.find(string.lower(name),"seed") then
-            table.insert(seeds,data)
-        else
-            table.insert(gear,data)
-        end
-    end
-
-    ---------------------------------------------------------------------------
-    -- ✅ chỉ scan SHOP thật (có layout)
-    ---------------------------------------------------------------------------
-    for _,container in pairs(LocalPlayer.PlayerGui:GetDescendants()) do
-        if (container:IsA("Frame") or container:IsA("ScrollingFrame")) then
-            
-            if container:FindFirstChildOfClass("UIGridLayout")
-            or container:FindFirstChildOfClass("UIListLayout") then
-
-                for _,child in pairs(container:GetChildren()) do
-                    process(child)
-                end
-            end
-        end
-    end
-
-    return seeds, gear
-end
-
--------------------------------------------------------------------------------
--- API SEND
+-- SEND API
 -------------------------------------------------------------------------------
 local function send()
-    updateUI("🔍 Scanning...")
+    updateUI("Scanning...")
 
-    local seeds, gear = scan()
+    local seeds, gear = scanUI()
     local weather = scanWeather()
-
-    if #seeds == 0 and #gear == 0 and weather.status == "None" then
-        updateUI("⚠️ No data", "Open Shop!")
-        return
-    end
 
     local payload = {
         seeds = seeds,
@@ -216,7 +217,7 @@ local function send()
         end)
     end
 
-    updateUI("✅ Done",
+    updateUI("Done",
         "Seeds: "..#seeds..
         " | Gear: "..#gear..
         "\nWeather: "..weather.status
