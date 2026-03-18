@@ -163,35 +163,54 @@ end
 local function scanUIForStock(guiLayer)
     local results = { seeds = {}, gear = {}, foundTracker = {} }
     
-    -- Blacklist rác
+    -- Blacklist GUIs (Không quét Warehouse, Inventory, Backpack...)
+    local blacklistedGuis = {"inventory", "backpack", "warehouse", "storage", "bank", "sidebar", "quest", "stat"}
+    
+    -- Blacklist từ khóa rác trong card
     local blacklist = {
         "harvested", "earned", "playtime", "shillings", "total", "level", "xp", 
         "balance", "owned", "shilling", "rank", "prestige", "quest", "inventory",
-        "buy", "sell", "confirm", "close", "back", "next", "equip", "status", "v643",
-        "money", "cash", "gems", "claimed", "rewards"
+        "confirm", "back", "next", "v643", "money", "cash", "gems", "claimed", "rewards"
     }
 
-    -- 1. CHẾ ĐỘ QUÉT CHUẨN (Tìm Containers có Layout)
     local function processItemUI(itemUI)
         if not itemUI:IsA("Frame") and not itemUI:IsA("ImageLabel") and not itemUI:IsA("TextButton") then return end
         
         local cardLabels = {}
         local itemImage = ""
-        local isJunkCard = false
         local isSoldOut = false
         
+        -- Sơ bộ kiểm tra xem card này có chứa whitelist name không
+        local foundWhitelistName = nil
+        local bestCardName = ""
+
         for _, child in pairs(itemUI:GetDescendants()) do
             if child:IsA("TextLabel") and child.Text ~= "" and child.Visible then
                 local txt = child.Text
                 local ltxt = string.lower(txt)
-                for _, word in ipairs(blacklist) do
-                    if string.find(ltxt, word) then isJunkCard = true break end
-                end
+                
+                -- Check Sold Out
                 if string.find(ltxt, "no stock") or string.find(ltxt, "sold out") or string.find(ltxt, "0 left") or string.find(ltxt, "0x") then 
                     isSoldOut = true 
                 end
-                if isJunkCard or isSoldOut then break end
-                table.insert(cardLabels, txt)
+
+                -- Check rác
+                local isJunk = false
+                for _, word in ipairs(blacklist) do
+                    if string.find(ltxt, word) then isJunk = true break end
+                end
+                
+                if not isJunk and not isPriceOrMoney(txt) then
+                    table.insert(cardLabels, txt)
+                    -- Dò tên hạt giống/gear trong label này
+                    local cat = guessItemCategory(txt)
+                    if cat then
+                        if string.len(txt) > string.len(bestCardName) then
+                            bestCardName = txt
+                            foundWhitelistName = txt
+                        end
+                    end
+                end
             elseif child:IsA("ImageLabel") and child.Visible and child.Image ~= "" then
                 local assetId = string.match(child.Image, "%d+")
                 if assetId and itemImage == "" then
@@ -200,90 +219,54 @@ local function scanUIForStock(guiLayer)
             end
         end
         
-        if isJunkCard or isSoldOut or #cardLabels == 0 then return end
+        if isSoldOut or not foundWhitelistName then return end
         
-        local itemName = ""
+        local itemName = foundWhitelistName
         local itemStock = -1
         local isExplicitStock = false
         
+        -- Tìm stock label: Là label chứa số NHƯNG không phải là label chứa Tên (để tránh Mushroom x5)
         for _, text in ipairs(cardLabels) do
-            local lowerText = string.lower(text)
-            
-            -- TÌM TÊN: Nhãn dài, không phải số, không phải tiền
-            -- Ưu tiên tìm tên TRƯỚC để có thể loại bỏ nó khỏi việc tìm stock
-            if not isPriceOrMoney(text) then
-                local isNumberLike = tonumber(text) 
-                    or string.match(text, "^%d+[xX]$")
-                    or string.match(text, "^[xX]%s*%d+$")
-                    or string.match(text, "^[%d%s]+$")
-                local isStockTag = string.find(lowerText, "stock") or string.find(lowerText, "left")
-                
-                if not isNumberLike and not isStockTag and string.len(text) > 2 and string.len(text) < 40 then
-                    -- Nếu label chứa tên hạt giống trong whitelist thì khả năng cao là Tên
-                    if guessItemCategory(text) then
-                        if string.len(text) > string.len(itemName) then
-                            itemName = text
-                        end
-                    end
-                end
-            end
-        end
-
-        -- Nếu không tìm thấy tên qua whitelist, fallback tìm nhãn dài nhất
-        if itemName == "" then
-            for _, text in ipairs(cardLabels) do
-                if not isPriceOrMoney(text) and string.len(text) > 2 and string.len(text) < 40 then
-                    local lowerText = string.lower(text)
-                    local isNumberLike = tonumber(text) or string.match(text, "^%d+[xX]$") or string.match(text, "^[xX]%s*%d+$")
-                    if not isNumberLike and string.len(text) > string.len(itemName) then
-                        itemName = text
-                    end
-                end
-            end
-        end
-
-        for _, text in ipairs(cardLabels) do
-            local lowerText = string.lower(text)
-            
-            -- TÌM STOCK: Tìm nhãn có từ khóa stock/left/remain hoặc định dạng "Nx"/"xN"
-            -- BỎ QUA nếu nhãn chính là itemName hoặc chứa itemName (tránh Mushroom x5 -> stock 5)
-            if not isPriceOrMoney(text) and text ~= itemName then
-                local isStockLabel = string.find(lowerText, "stock") 
-                    or string.find(lowerText, "left")
-                    or string.find(lowerText, "remain")
-                    or string.match(text, "^%d+[xX]$")   -- "9x"
-                    or string.match(text, "^[xX]%d+$")   -- "x9"
-                
+            local ltxt = string.lower(text)
+            -- Nếu label này KHÁC label chứa tên, hoặc nếu label này có từ khóa "stock"/"left"
+            if text ~= itemName then
+                local isStockLabel = string.find(ltxt, "stock") or string.find(ltxt, "left") or string.match(text, "^%d+[xX]$") or string.match(text, "^[xX]%d+$")
                 if isStockLabel then
                     local num = extractSmallestNumber(text)
                     if num and num > 0 then
                         itemStock = num
                         isExplicitStock = true
+                        break
                     end
                 end
             end
         end
-        
-        -- Fallback: Nếu vẫn chưa có stock, tìm số bất kỳ không phải trong itemName
+
+        -- Fallback: Nếu không thấy label "Stock", tìm số trong nhãn còn lại (không phải nhãn tên)
         if not isExplicitStock then
             for _, text in ipairs(cardLabels) do
-                if not isPriceOrMoney(text) and text ~= itemName then
-                    for n in string.gmatch(text, "%d+") do
-                        local num = tonumber(n)
-                        if num and num >= 1 and num <= 999 then
-                            if itemStock == -1 or num < itemStock then
-                                itemStock = num
-                            end
-                        end
+                if text ~= itemName then
+                    local num = extractSmallestNumber(text)
+                    if num and num > 0 and num < 1000 then
+                        itemStock = num
+                        break
                     end
                 end
             end
         end
+
+        -- Cuối cùng: Nếu vẫn ko thấy stock, kiểm tra xem trong itemName có "xN" không
+        if itemStock == -1 then
+            local xNum = string.match(itemName, "x(%d+)") or string.match(itemName, "(%d+)x")
+            if xNum then
+                itemStock = tonumber(xNum)
+            end
+        end
+
         if itemName == "" or itemStock <= 0 then return end
         
-        -- Kiểm tra whitelist - Bỏ ngay nếu không khớp
         local cat = guessItemCategory(itemName)
-        if not cat then return end  -- Không trong whitelist -> Bỏ qua
+        if not cat then return end
         
         if not results.foundTracker[itemName] then
             table.insert(cat == "seed" and results.seeds or results.gear, {
@@ -293,22 +276,30 @@ local function scanUIForStock(guiLayer)
                 image = itemImage
             })
             results.foundTracker[itemName] = true
-            return true
         end
     end
 
-    -- CHẠY QUÉT CHUẨN (Container có Layout - đáng tin nhất)
-    for _, container in pairs(guiLayer:GetDescendants()) do
-        if screenGui and container:IsDescendantOf(screenGui) then continue end
-
-        if (container:IsA("ScrollingFrame") or container:IsA("Frame")) and 
-           (container:FindFirstChildWhichIsA("UIGridLayout") or container:FindFirstChildWhichIsA("UIListLayout")) then
-            for _, itemUI in pairs(container:GetChildren()) do
-                processItemUI(itemUI)
+    -- CHẠY QUÉT
+    for _, gui in pairs(guiLayer:GetChildren()) do
+        if gui:IsA("ScreenGui") and gui.Enabled then
+            local gName = string.lower(gui.Name)
+            local skip = false
+            for _, b in ipairs(blacklistedGuis) do
+                if string.find(gName, b) then skip = true break end
+            end
+            
+            if not skip then
+                for _, container in pairs(gui:GetDescendants()) do
+                    if (container:IsA("ScrollingFrame") or container:IsA("Frame")) and 
+                       (container:FindFirstChildWhichIsA("UIGridLayout") or container:FindFirstChildWhichIsA("UIListLayout")) then
+                        for _, itemUI in pairs(container:GetChildren()) do
+                            processItemUI(itemUI)
+                        end
+                    end
+                end
             end
         end
     end
-    -- LƯU Ý: Đã tắt Deep Scan vì nó quét nhầm quá nhiều Frame không phải Shop UI
     
     return results.seeds, results.gear
 end
@@ -476,4 +467,3 @@ task.spawn(function()
         postDataToAPI()
     end
 end)
-
