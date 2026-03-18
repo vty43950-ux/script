@@ -14,12 +14,12 @@ local CONFIG = {
     NOTIFY_URL       = "https://zenithghz.qzz.io/api/adminnotify",
     API_ENABLED      = true,
 
-    WEBHOOK_URL      = "https://discord.com/api/webhooks/PASTE_HERE",
-    WEBHOOK_ENABLED  = false,
+    WEBHOOK_URL      = "https://discord.com/api/webhooks/1482391815024803963/6V8VLwhL7X1o9FL_n1GNxxsoRH6su1tDzhbxzT4wJe_qr_MGCVaqp1fUs8ZKdnbyyC_H",
+    WEBHOOK_ENABLED  = true,
 
     SKIP_EMPTY       = true,
     ANTI_AFK         = true,
-    DISABLE_RENDERING = true,
+    DISABLE_RENDERING = false,
 
     -- Cooldown webhook: bao nhiêu giây tối thiểu giữa 2 lần gửi Discord
     WEBHOOK_COOLDOWN = 20,
