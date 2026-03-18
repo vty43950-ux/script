@@ -1,469 +1,413 @@
-local HttpService = game:GetService("HttpService")
-local Players = game:GetService("Players")
-local Workspace = game:GetService("Workspace")
+-------------------------------------------------------------------------------
+-- 🌱 GARDEN HORIZONS STOCK BOT
+-- Adapted from StockBot (Grow a Garden) for Garden Horizons
+-- Gửi webhook Discord + Post lên API mỗi khi có restock
+-- Chỉ theo dõi: Seeds Shop, Gear Shop, Weather
+-------------------------------------------------------------------------------
+
+_G.GHZ_StockBot_Config = {
+    -- ── API ────────────────────────────────────────────────────────
+    ["API_Enabled"]     = true,
+    ["API_URL"]         = "https://zenithghz.qzz.io/api/update",
+
+    -- ── Discord Webhook ─────────────────────────────────────────────
+    ["Webhook_Enabled"] = true,
+    ["Webhook_URL"]     = "https://discord.com/api/webhooks/1482391815024803963/6V8VLwhL7X1o9FL_n1GNxxsoRH6su1tDzhbxzT4wJe_qr_MGCVaqp1fUs8ZKdnbyyC_H",
+
+    -- ── Embed Colors ────────────────────────────────────────────────
+    ["Color_Stock"]     = Color3.fromRGB(56, 238, 23),   -- Xanh lá  – Seeds & Gear
+    ["Color_Weather"]   = Color3.fromRGB(42, 109, 255),  -- Xanh dương – Weather
+
+    -- ── Features ────────────────────────────────────────────────────
+    ["Anti_AFK"]              = true,
+    ["Disable_Rendering"]     = true,  -- Tắt 3D render để giảm lag khi treo
+    ["Weather_Report"]        = true,  -- Webhook ngay khi thời tiết đổi
+}
+
+-------------------------------------------------------------------------------
+-- SERVICES
+-------------------------------------------------------------------------------
+local HttpService       = game:GetService("HttpService")
+local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local CoreGui = game:GetService("CoreGui")
-local LocalPlayer = Players.LocalPlayer
+local CoreGui           = game:GetService("CoreGui")
+local RunService        = game:GetService("RunService")
+local VirtualUser       = cloneref(game:GetService("VirtualUser"))
+local LocalPlayer       = Players.LocalPlayer
 
--- API URL CỦA BẠN 
-local API_URL = "https://zenithghz.qzz.io/api/update"
+-- Tắt rendering nếu được bật
+if _G.GHZ_StockBot_Config["Disable_Rendering"] then
+    pcall(function() RunService:Set3dRenderingEnabled(false) end)
+end
+
+-- Chống chạy 2 lần
+if _G.GHZ_StockBot then return end
+_G.GHZ_StockBot = true
+
+local Config = _G.GHZ_StockBot_Config
 
 -------------------------------------------------------------------------------
--- GIAO DIỆN (UI) THÔNG BÁO CHO NGƯỜI DÙNG
+-- IN-GAME MONITORING UI
 -------------------------------------------------------------------------------
-local uiLayer = (gethui and gethui()) or CoreGui:FindFirstChild("RobloxGui") or CoreGui
+local uiLayer = (gethui and gethui()) or CoreGui
+
+-- Xóa UI cũ nếu tồn tại
+if uiLayer:FindFirstChild("GHZ_Bot_UI") then
+    uiLayer.GHZ_Bot_UI:Destroy()
+end
 
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "GHZ_Tracker_UI"
+screenGui.Name = "GHZ_Bot_UI"
 screenGui.ResetOnSpawn = false
 screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-
--- Xóa UI cũ nếu chạy lại script nhiều lần
-if uiLayer:FindFirstChild("GHZ_Tracker_UI") then
-    uiLayer["GHZ_Tracker_UI"]:Destroy()
-end
 screenGui.Parent = uiLayer
 
-local mainFrame = Instance.new("Frame")
-mainFrame.Name = "MainFrame"
-mainFrame.Size = UDim2.new(0, 250, 0, 100)
-mainFrame.Position = UDim2.new(0, 10, 0, 10) -- Góc trên cùng bên trái
-mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-mainFrame.BorderSizePixel = 0
-mainFrame.BackgroundTransparency = 0.2
-mainFrame.Parent = screenGui
+-- Main frame
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 280, 0, 165)
+frame.Position = UDim2.new(0, 12, 0, 12)
+frame.BackgroundColor3 = Color3.fromRGB(18, 18, 28)
+frame.BackgroundTransparency = 0.08
+frame.BorderSizePixel = 0
+frame.Parent = screenGui
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 10)
 
-local uiCorner = Instance.new("UICorner")
-uiCorner.CornerRadius = UDim.new(0, 8)
-uiCorner.Parent = mainFrame
+local uiStroke = Instance.new("UIStroke")
+uiStroke.Color = Color3.fromRGB(80, 200, 80)
+uiStroke.Thickness = 1.5
+uiStroke.Transparency = 0.5
+uiStroke.Parent = frame
+
+-- Title
+local titleBar = Instance.new("Frame")
+titleBar.Size = UDim2.new(1, 0, 0, 32)
+titleBar.BackgroundColor3 = Color3.fromRGB(30, 80, 30)
+titleBar.BorderSizePixel = 0
+titleBar.Parent = frame
+Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0, 10)
 
 local titleLabel = Instance.new("TextLabel")
-titleLabel.Name = "Title"
-titleLabel.Size = UDim2.new(1, 0, 0, 30)
-titleLabel.Position = UDim2.new(0, 0, 0, 0)
+titleLabel.Size = UDim2.new(1, 0, 1, 0)
 titleLabel.BackgroundTransparency = 1
-titleLabel.Text = "🌱 GHZ Auto-Tracker"
+titleLabel.Text = "🌱 GHZ Stock Bot"
 titleLabel.TextColor3 = Color3.fromRGB(150, 255, 150)
 titleLabel.Font = Enum.Font.GothamBold
 titleLabel.TextSize = 14
-titleLabel.Parent = mainFrame
+titleLabel.Parent = titleBar
 
+-- Status label
 local statusLabel = Instance.new("TextLabel")
-statusLabel.Name = "Status"
-statusLabel.Size = UDim2.new(1, -20, 0, 25)
-statusLabel.Position = UDim2.new(0, 10, 0, 30)
+statusLabel.Name = "STATUS"
+statusLabel.Size = UDim2.new(1, -16, 0, 22)
+statusLabel.Position = UDim2.new(0, 8, 0, 36)
 statusLabel.BackgroundTransparency = 1
 statusLabel.Text = "Status: 🟡 Khởi động..."
 statusLabel.TextColor3 = Color3.fromRGB(240, 240, 240)
 statusLabel.Font = Enum.Font.GothamMedium
 statusLabel.TextSize = 12
 statusLabel.TextXAlignment = Enum.TextXAlignment.Left
-statusLabel.Parent = mainFrame
+statusLabel.Parent = frame
 
-local infoLabel = Instance.new("TextLabel")
-infoLabel.Name = "Info"
-infoLabel.Size = UDim2.new(1, -20, 0, 40)
-infoLabel.Position = UDim2.new(0, 10, 0, 55)
-infoLabel.BackgroundTransparency = 1
-infoLabel.Text = "Data: Chưa có | Thời tiết: None"
-infoLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-infoLabel.Font = Enum.Font.Gotham
-infoLabel.TextSize = 11
-infoLabel.TextXAlignment = Enum.TextXAlignment.Left
-infoLabel.TextYAlignment = Enum.TextYAlignment.Top
-infoLabel.Parent = mainFrame
+-- Countdown label
+local countLabel = Instance.new("TextLabel")
+countLabel.Name = "COUNT"
+countLabel.Size = UDim2.new(1, -16, 0, 22)
+countLabel.Position = UDim2.new(0, 8, 0, 58)
+countLabel.BackgroundTransparency = 1
+countLabel.Text = "⏳ Restock: --:--"
+countLabel.TextColor3 = Color3.fromRGB(180, 180, 255)
+countLabel.Font = Enum.Font.GothamMedium
+countLabel.TextSize = 12
+countLabel.TextXAlignment = Enum.TextXAlignment.Left
+countLabel.Parent = frame
 
-local function updateUI(statusMsg, infoMsg, color)
-    statusLabel.Text = statusMsg
-    if infoMsg then infoLabel.Text = infoMsg end
-    if color then statusLabel.TextColor3 = color end
+-- Seeds info
+local seedLabel = Instance.new("TextLabel")
+seedLabel.Name = "SEEDS"
+seedLabel.Size = UDim2.new(1, -16, 0, 20)
+seedLabel.Position = UDim2.new(0, 8, 0, 82)
+seedLabel.BackgroundTransparency = 1
+seedLabel.Text = "🌿 Seeds: -"
+seedLabel.TextColor3 = Color3.fromRGB(130, 255, 130)
+seedLabel.Font = Enum.Font.Gotham
+seedLabel.TextSize = 11
+seedLabel.TextXAlignment = Enum.TextXAlignment.Left
+seedLabel.Parent = frame
+
+-- Gear info
+local gearLabel = Instance.new("TextLabel")
+gearLabel.Name = "GEAR"
+gearLabel.Size = UDim2.new(1, -16, 0, 20)
+gearLabel.Position = UDim2.new(0, 8, 0, 101)
+gearLabel.BackgroundTransparency = 1
+gearLabel.Text = "⚙️ Gear: -"
+gearLabel.TextColor3 = Color3.fromRGB(255, 200, 100)
+gearLabel.Font = Enum.Font.Gotham
+gearLabel.TextSize = 11
+gearLabel.TextXAlignment = Enum.TextXAlignment.Left
+gearLabel.Parent = frame
+
+-- Weather info
+local weatherLabel = Instance.new("TextLabel")
+weatherLabel.Name = "WEATHER"
+weatherLabel.Size = UDim2.new(1, -16, 0, 20)
+weatherLabel.Position = UDim2.new(0, 8, 0, 120)
+weatherLabel.BackgroundTransparency = 1
+weatherLabel.Text = "⛅ Weather: None"
+weatherLabel.TextColor3 = Color3.fromRGB(100, 200, 255)
+weatherLabel.Font = Enum.Font.Gotham
+weatherLabel.TextSize = 11
+weatherLabel.TextXAlignment = Enum.TextXAlignment.Left
+weatherLabel.Parent = frame
+
+-- API/Webhook status
+local apiLabel = Instance.new("TextLabel")
+apiLabel.Name = "API"
+apiLabel.Size = UDim2.new(1, -16, 0, 20)
+apiLabel.Position = UDim2.new(0, 8, 0, 141)
+apiLabel.BackgroundTransparency = 1
+apiLabel.Text = "📡 API: -  💬 Webhook: -"
+apiLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+apiLabel.Font = Enum.Font.Gotham
+apiLabel.TextSize = 11
+apiLabel.TextXAlignment = Enum.TextXAlignment.Left
+apiLabel.Parent = frame
+
+local function updateUI(status, seeds, gear, weather, apiOk, hookOk)
+    if status  then statusLabel.Text  = "Status: " .. status end
+    if seeds   ~= nil then seedLabel.Text    = string.format("🌿 Seeds: %d loại", seeds) end
+    if gear    ~= nil then gearLabel.Text    = string.format("⚙️ Gear:  %d loại", gear) end
+    if weather ~= nil then weatherLabel.Text = "⛅ Weather: " .. tostring(weather) end
+
+    local apiStr  = (apiOk  == true and "✅") or (apiOk  == false and "❌") or "-"
+    local hookStr = (hookOk == true and "✅") or (hookOk == false and (Config["Webhook_Enabled"] and "❌" or "⏸️")) or "-"
+    apiLabel.Text = "📡 API: " .. apiStr .. "  💬 Hook: " .. hookStr
+end
+
+local function setCountdown(sec)
+    local m = math.floor(sec / 60)
+    local s = sec % 60
+    countLabel.Text = string.format("⏳ Restock: %02d:%02d", m, s)
 end
 
 -------------------------------------------------------------------------------
--- HÀM HỖ TRỢ DÒ TÌM TỰ ĐỘNG (AUTO-SCAN)
+-- HELPERS
 -------------------------------------------------------------------------------
-
-local function findTextLabelWithKeyword(parent, keyword)
-    for _, obj in pairs(parent:GetDescendants()) do
-        if obj:IsA("TextLabel") or obj:IsA("TextBox") or obj:IsA("TextButton") then
-            if obj.Text and string.match(string.lower(obj.Text), string.lower(keyword)) then
-                return obj
-            end
-        end
-    end
-    return nil
+local function Color3ToInt(c)
+    return tonumber(c:ToHex(), 16)
 end
 
--- Whitelist tên Hạt Giống (Seeds) - Chỉ chấp nhận tên trong danh sách này
-local SEED_NAMES = {
-    "onion", "corn", "carrot", "potato", "tomato", "blueberry", "strawberry",
-    "grape", "wheat", "pumpkin", "watermelon", "mushroom", "apple", "orange",
-    "lemon", "cherry", "pear", "pineapple", "coconut", "mango", "peach",
-    "pepper", "eggplant", "sunflower", "bamboo", "cactus", "rose", "tulip",
-    "lily", "daisy", "orchid", "lavender", "seed", "sprout", "plant", "fertile soil"
-}
+local req = (syn and syn.request) or (http and http.request) or request
 
--- Whitelist tên Đồ Dùng (Gear) - Chỉ chấp nhận tên trong danh sách này
-local GEAR_NAMES = {
-    "sprinkler", "watering", "trowel", "shovel", "hoe", "scythe", "basket",
-    "reverter", "favorite", "tool", "can", "gloves", "boots", "hat",
-    "fertilizer", "pot", "planter", "rake", "pitchfork"
-}
+-------------------------------------------------------------------------------
+-- DISCORD WEBHOOK SENDER
+-------------------------------------------------------------------------------
+local function sendWebhook(color, fields, title)
+    if not Config["Webhook_Enabled"] then return false end
+    local url = Config["Webhook_URL"]
+    if not url or url == "" or url:find("PASTE") then return false end
+    if not req then return false end
 
--- Trả về "seed", "gear", hoặc NIL nếu không khớp whitelist
-local function guessItemCategory(itemName)
-    local name = string.lower(itemName)
-    -- Ưu tiên check Fertile Soil trước vì nó chứa "soil"
-    if string.find(name, "fertile soil") then return "seed" end
-    
-    for _, keyword in ipairs(SEED_NAMES) do
-        if string.find(name, keyword) then return "seed" end
-    end
-    for _, keyword in ipairs(GEAR_NAMES) do
-        if string.find(name, keyword) then return "gear" end
-    end
-    return nil  -- Không trong whitelist -> Bỏ qua hoàn toàn
+    local body = {
+        username = "🌱 GHZ Stock Tracker",
+        embeds = {{
+            title     = title or "Garden Horizons Update",
+            color     = Color3ToInt(color),
+            fields    = fields,
+            footer    = { text = "Garden Horizons  •  zenithghz.qzz.io" },
+            timestamp = DateTime.now():ToIsoDate()
+        }}
+    }
+
+    local ok = pcall(function()
+        task.spawn(function()
+            req({
+                Url     = url,
+                Method  = "POST",
+                Headers = { ["Content-Type"] = "application/json" },
+                Body    = HttpService:JSONEncode(body)
+            })
+        end)
+    end)
+    return ok
 end
 
--- Rút trích số ra khỏi chuỗi (Ví dụ "Stock: 15" -> 15)
-local function extractNumber(text)
-    if not text then return nil end
-    local num = string.match(text, "%d+")
-    return num and tonumber(num) or nil
-end
+-------------------------------------------------------------------------------
+-- API POST
+-------------------------------------------------------------------------------
+local function postToAPI(seeds, gear, weather)
+    if not Config["API_Enabled"] then return false end
+    if not req then return false end
 
--- Kiểm tra text có phải giá tiền không (Garden Horizons dùng Shillings)
-local function isPriceOrMoney(text)
-    local t = string.lower(text)
-    -- Từ khóa tiền tệ rõ ràng
-    if string.match(t, "%$") or string.find(t, "coin") or string.find(t, "cash")
-    or string.find(t, "gem") or string.find(t, "shilling") then
+    local payload = {
+        seeds    = seeds,
+        gear     = gear,
+        weather  = weather,
+        timestamp = os.time()
+    }
+
+    local ok, res = pcall(function()
+        return req({
+            Url     = Config["API_URL"],
+            Method  = "POST",
+            Headers = { ["Content-Type"] = "application/json" },
+            Body    = HttpService:JSONEncode(payload)
+        })
+    end)
+
+    if ok and res and res.StatusCode == 200 then
+        print("[GHZ Bot] ✅ API OK")
         return true
     end
-    -- Số lớn úm tròn (>= 500) rất có khả năng là giá tiền
-    local n = tonumber(string.match(text, "^%d+$"))
-    if n and n >= 500 then return true end
+    print("[GHZ Bot] ❌ API fail: " .. (ok and tostring(res and res.StatusCode) or "error"))
     return false
 end
 
--- Trích xuất số NHẾ NHẤT trong một string (tránh nhầm số giá tiền lớn)
-local function extractSmallestNumber(text)
-    local smallest = nil
-    for n in string.gmatch(text, "%d+") do
-        local num = tonumber(n)
-        if num and num > 0 and num <= 999 then  -- Cập giới hạn hợp lý cho số lượng
-            if not smallest or num < smallest then
-                smallest = num
-            end
-        end
+-------------------------------------------------------------------------------
+-- DATA REMOTES (Seeds, Gear via DataStream — chỉ Seeds & Gear)
+-------------------------------------------------------------------------------
+local DataStream = ReplicatedStorage:WaitForChild("GameEvents"):WaitForChild("DataStream")
+
+local latestSeeds   = {}
+local latestGear    = {}
+local latestWeather = { status = "None", duration = 0 }
+
+local function makeItemList(stockTable)
+    local out = {}
+    if type(stockTable) ~= "table" then return out end
+    for name, data in pairs(stockTable) do
+        table.insert(out, {
+            name     = tostring(name),
+            quantity = tonumber(data.Stock) or 0,
+            category = "?"
+        })
     end
-    return smallest
+    return out
 end
 
-local function scanUIForStock(guiLayer)
-    local results = { seeds = {}, gear = {}, foundTracker = {} }
-    
-    -- Blacklist GUIs (Không quét Warehouse, Inventory, Backpack...)
-    local blacklistedGuis = {"inventory", "backpack", "warehouse", "storage", "bank", "sidebar", "quest", "stat"}
-    
-    -- Blacklist từ khóa rác trong card
-    local blacklist = {
-        "harvested", "earned", "playtime", "shillings", "total", "level", "xp", 
-        "balance", "owned", "shilling", "rank", "prestige", "quest", "inventory",
-        "confirm", "back", "next", "v643", "money", "cash", "gems", "claimed", "rewards"
-    }
+DataStream.OnClientEvent:Connect(function(evType, profile, data)
+    if evType ~= "UpdateData" then return end
+    if not profile:find(LocalPlayer.Name) then return end
 
-    local function processItemUI(itemUI)
-        if not itemUI:IsA("Frame") and not itemUI:IsA("ImageLabel") and not itemUI:IsA("TextButton") then return end
-        
-        local cardLabels = {}
-        local itemImage = ""
-        local isSoldOut = false
-        
-        -- Sơ bộ kiểm tra xem card này có chứa whitelist name không
-        local foundWhitelistName = nil
-        local bestCardName = ""
+    -- Duyệt packet: chỉ lấy SeedStock và GearStock
+    -- BỎ QUA: EventShopStock, PetEggStock, CosmeticStock
+    local newSeeds = {}
+    local newGear  = {}
 
-        for _, child in pairs(itemUI:GetDescendants()) do
-            if child:IsA("TextLabel") and child.Text ~= "" and child.Visible then
-                local txt = child.Text
-                local ltxt = string.lower(txt)
-                
-                -- Check Sold Out
-                if string.find(ltxt, "no stock") or string.find(ltxt, "sold out") or string.find(ltxt, "0 left") or string.find(ltxt, "0x") then 
-                    isSoldOut = true 
-                end
+    for _, packet in ipairs(data) do
+        local name    = packet[1]
+        local content = packet[2]
 
-                -- Check rác
-                local isJunk = false
-                for _, word in ipairs(blacklist) do
-                    if string.find(ltxt, word) then isJunk = true break end
-                end
-                
-                if not isJunk and not isPriceOrMoney(txt) then
-                    table.insert(cardLabels, txt)
-                    -- Dò tên hạt giống/gear trong label này
-                    local cat = guessItemCategory(txt)
-                    if cat then
-                        if string.len(txt) > string.len(bestCardName) then
-                            bestCardName = txt
-                            foundWhitelistName = txt
-                        end
-                    end
-                end
-            elseif child:IsA("ImageLabel") and child.Visible and child.Image ~= "" then
-                local assetId = string.match(child.Image, "%d+")
-                if assetId and itemImage == "" then
-                    itemImage = "https://www.roblox.com/asset-thumbnail/image?assetId=" .. assetId .. "&width=420&height=420&format=png"
-                end
-            end
+        if name == "ROOT/SeedStock/Stocks" then
+            newSeeds = makeItemList(content)
+            for _, item in ipairs(newSeeds) do item.category = "seed" end
+
+        elseif name == "ROOT/GearStock/Stocks" then
+            newGear = makeItemList(content)
+            for _, item in ipairs(newGear) do item.category = "gear" end
         end
-        
-        if isSoldOut or not foundWhitelistName then return end
-        
-        local itemName = foundWhitelistName
-        local itemStock = -1
-        local isExplicitStock = false
-        
-        -- Tìm stock label: Là label chứa số NHƯNG không phải là label chứa Tên (để tránh Mushroom x5)
-        for _, text in ipairs(cardLabels) do
-            local ltxt = string.lower(text)
-            -- Nếu label này KHÁC label chứa tên, hoặc nếu label này có từ khóa "stock"/"left"
-            if text ~= itemName then
-                local isStockLabel = string.find(ltxt, "stock") or string.find(ltxt, "left") or string.match(text, "^%d+[xX]$") or string.match(text, "^[xX]%d+$")
-                if isStockLabel then
-                    local num = extractSmallestNumber(text)
-                    if num and num > 0 then
-                        itemStock = num
-                        isExplicitStock = true
-                        break
-                    end
-                end
-            end
-        end
-
-        -- Fallback: Nếu không thấy label "Stock", tìm số trong nhãn còn lại (không phải nhãn tên)
-        if not isExplicitStock then
-            for _, text in ipairs(cardLabels) do
-                if text ~= itemName then
-                    local num = extractSmallestNumber(text)
-                    if num and num > 0 and num < 1000 then
-                        itemStock = num
-                        break
-                    end
-                end
-            end
-        end
-
-        -- Cuối cùng: Nếu vẫn ko thấy stock, kiểm tra xem trong itemName có "xN" không
-        if itemStock == -1 then
-            local xNum = string.match(itemName, "x(%d+)") or string.match(itemName, "(%d+)x")
-            if xNum then
-                itemStock = tonumber(xNum)
-            end
-        end
-
-        if itemName == "" or itemStock <= 0 then return end
-        
-        local cat = guessItemCategory(itemName)
-        if not cat then return end
-        
-        if not results.foundTracker[itemName] then
-            table.insert(cat == "seed" and results.seeds or results.gear, {
-                name = itemName,
-                quantity = itemStock,
-                category = cat,
-                image = itemImage
-            })
-            results.foundTracker[itemName] = true
-        end
+        -- ❌ ROOT/EventShopStock, ROOT/PetEggStock, ROOT/CosmeticStock → bỏ qua
     end
 
-    -- CHẠY QUÉT
-    for _, gui in pairs(guiLayer:GetChildren()) do
-        if gui:IsA("ScreenGui") and gui.Enabled then
-            local gName = string.lower(gui.Name)
-            local skip = false
-            for _, b in ipairs(blacklistedGuis) do
-                if string.find(gName, b) then skip = true break end
-            end
-            
-            if not skip then
-                for _, container in pairs(gui:GetDescendants()) do
-                    if (container:IsA("ScrollingFrame") or container:IsA("Frame")) and 
-                       (container:FindFirstChildWhichIsA("UIGridLayout") or container:FindFirstChildWhichIsA("UIListLayout")) then
-                        for _, itemUI in pairs(container:GetChildren()) do
-                            processItemUI(itemUI)
-                        end
-                    end
-                end
-            end
-        end
-    end
-    
-    return results.seeds, results.gear
-end
+    latestSeeds = newSeeds
+    latestGear  = newGear
 
--------------------------------------------------------------------------------
--- HÀM TRÍCH XUẤT DỮ LIỆU TỰ ĐỘNG TỪ GARDEN HORIZONS
--------------------------------------------------------------------------------
-local function getGardenHorizonsData()
-    local seeds = {}
-    local gear = {}
-    local weather = { status = "None", duration = 0 }
-    
-    local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
-    
-    updateUI("Status: 🔍 Đang quét dữ liệu...", nil, Color3.fromRGB(255, 200, 100))
-    
-    pcall(function()
-        -- 1. Weather scan (Mở rộng tìm kiếm)
-        local wKeywords = {"starfall", "storm", "clear", "rain", "sunny", "meteor", "mowis", "cloudy", "windy", "snow"}
-        local foundW = false
-        
-        -- Tìm trong toàn bộ ScreenGui trước
-        for _, kw in ipairs(wKeywords) do
-            local wLabel = findTextLabelWithKeyword(PlayerGui, kw)
-            if wLabel then
-                weather.status = (kw:gsub("^%l", string.upper)) 
-                
-                local function findDuration(root)
-                    for _, child in pairs(root:GetDescendants()) do
-                        if child:IsA("TextLabel") then
-                            local txt = child.Text
-                            local m, s = string.match(txt, "(%d+):(%d+)")
-                            if m and s then return (tonumber(m) * 60) + tonumber(s) end
-                            local numsec = string.match(txt, "(%d+)s")
-                            if numsec then return tonumber(numsec) end
-                        end
-                    end
-                end
-                
-                weather.duration = findDuration(wLabel.Parent) or findDuration(wLabel.Parent.Parent) or 0
-                foundW = true
-                break
-            end
+    -- Build discord fields
+    local fields = {}
+
+    if #newSeeds > 0 then
+        local s = ""
+        for _, item in ipairs(newSeeds) do
+            s = s .. string.format("🌱 **%s** x%d\n", item.name, item.quantity)
         end
-        
-        -- 2. Item scan
-        seeds, gear = scanUIForStock(PlayerGui)
+        table.insert(fields, { name = "🌿 SEEDS STOCK", value = s, inline = true })
+    end
+
+    if #newGear > 0 then
+        local g = ""
+        for _, item in ipairs(newGear) do
+            g = g .. string.format("🔧 **%s** x%d\n", item.name, item.quantity)
+        end
+        table.insert(fields, { name = "⚙️ GEAR STOCK", value = g, inline = true })
+    end
+
+    -- Post API + Discord concurrently
+    local apiOk, hookOk
+
+    task.spawn(function()
+        apiOk  = postToAPI(newSeeds, newGear, latestWeather)
+        hookOk = sendWebhook(Config["Color_Stock"], fields, "🌱 GHZ Restock Alert")
+        updateUI("✅ Đã cập nhật", #newSeeds, #newGear, latestWeather.status, apiOk, hookOk)
+        print(string.format("[GHZ Bot] 📦 Seeds: %d | Gear: %d | API: %s | Hook: %s",
+            #newSeeds, #newGear,
+            apiOk  and "OK" or "FAIL",
+            hookOk and "OK" or (Config["Webhook_Enabled"] and "FAIL" or "OFF")))
     end)
-    
-    local infoStr = string.format("Data: %d Hạt, %d Đồ\nWeather: %s (%ds)", #seeds, #gear, weather.status, weather.duration)
-    updateUI("Status: ✅ Đã quét xong!", infoStr, Color3.fromRGB(130, 255, 130))
-    
-    print(string.format("[GHZ Scanner] 📊 Kết quả: Seeds: %d, Gears: %d | Weather: %s (%ds)", #seeds, #gear, weather.status, weather.duration))
-    return seeds, gear, weather
+end)
+
+-------------------------------------------------------------------------------
+-- WEATHER EVENT — hook tức thì
+-------------------------------------------------------------------------------
+local weatherEventOk, WeatherEvent = pcall(function()
+    return ReplicatedStorage:WaitForChild("GameEvents", 5):WaitForChild("WeatherEventStarted", 5)
+end)
+
+if weatherEventOk and WeatherEvent then
+    WeatherEvent.OnClientEvent:Connect(function(eventName, length)
+        if not Config["Weather_Report"] then return end
+
+        latestWeather = { status = tostring(eventName), duration = tonumber(length) or 0 }
+        weatherLabel.Text = "⛅ Weather: " .. tostring(eventName)
+
+        local serverTime = math.round(workspace:GetServerTimeNow())
+        local endUnix    = serverTime + (tonumber(length) or 0)
+
+        local hookOk = sendWebhook(Config["Color_Weather"], {
+            {
+                name   = "⛅ WEATHER EVENT",
+                value  = string.format("**%s**\nKết thúc: <t:%d:R>", tostring(eventName), endUnix),
+                inline = false
+            }
+        }, "⛅ GHZ Weather Alert")
+
+        print(string.format("[GHZ Bot] ⛅ Weather: %s (%ds) | Hook: %s",
+            tostring(eventName), tonumber(length) or 0,
+            hookOk and "OK" or "FAIL/OFF"))
+    end)
+    print("[GHZ Bot] ⛅ Weather hook đã kết nối")
+else
+    print("[GHZ Bot] ⚠️ Không tìm thấy WeatherEventStarted remote")
 end
 
 -------------------------------------------------------------------------------
--- HÀM GỬI LÊN API SERVER
+-- ANTI-AFK
 -------------------------------------------------------------------------------
-local function postDataToAPI()
-    local seeds, gear, weather = getGardenHorizonsData()
-    
-    -- Cho phép gửi nếu CÓ ít nhất 1 thứ (Hạt HOẶC Đồ HOẶC Thời tiết khác None)
-    if #seeds == 0 and #gear == 0 and weather.status == "None" then
-        print("[GHZ Script] ❌ Không thấy dữ liệu gì để gửi. Hãy mở cửa hàng!")
-        updateUI("Status: ⚠️ Không thấy Shop UI!", "Mở Shop để script lấy data.", Color3.fromRGB(255, 100, 100))
-        return 
-    end
-    
-    local payload = {
-        seeds = seeds,
-        gear = gear,
-        weather = weather,
-        timestamp = os.time()
-    }
-    
-    local jsonData = HttpService:JSONEncode(payload)
-    local req = (syn and syn.request) or (http and http.request) or request
-    
-    if req then
-        print("[GHZ Script] 📡 Đang gửi dữ liệu lên Server: " .. API_URL)
-        local success, response = pcall(function()
-            return req({
-                Url = API_URL,
-                Method = "POST",
-                Headers = { ["Content-Type"] = "application/json" },
-                Body = jsonData
-            })
-        end)
-        
-        if success then
-            if response.StatusCode == 200 then
-                print("[GHZ Script] ✅ Cập nhật thành công!")
-                updateUI("Status: ✅ Up API Thành công", nil, Color3.fromRGB(150, 255, 150))
-            else
-                print("[GHZ Script] ❌ Server lỗi: " .. tostring(response.StatusCode))
-                updateUI("Status: ❌ Server Lỗi", "Code: " .. tostring(response.StatusCode), Color3.fromRGB(255, 100, 100))
-            end
-        else
-            print("[GHZ Script] ❌ Không kết nối được Server. Hãy kiểm tra node server.js")
-            updateUI("Status: ❌ Mất kết nối Server", nil, Color3.fromRGB(255, 100, 100))
-        end
-    end
-end
+LocalPlayer.Idled:Connect(function()
+    if not Config["Anti_AFK"] then return end
+    VirtualUser:CaptureController()
+    VirtualUser:ClickButton2(Vector2.new())
+    print("[GHZ Bot] 🛡️ Anti-AFK kích hoạt")
+end)
 
 -------------------------------------------------------------------------------
--- TÍNH GIÂY ĐỢI ĐẾN MỐC RESTOCK 5 PHÚT TIẾP THEO (THEO UTC)
--- Game restock vào mỗi mốc 5 phút chẵn theo UTC:
--- :00, :05, :10, :15, :20, :25, :30, :35, :40, :45, :50, :55
--------------------------------------------------------------------------------
-local function getSecondsUntilNextRestock()
-    local t = os.date("!*t")  -- Lấy thời gian UTC (dấu ! = UTC)
-    local secInMin  = t.sec         -- 0-59
-    local minInHour = t.min         -- 0-59
-    
-    -- Số giây đã qua trong chu kỳ 5 phút hiện tại
-    local secIntoCycle = (minInHour % 5) * 60 + secInMin
-    
-    -- Số giây còn lại đến cuối chu kỳ
-    local remaining = 300 - secIntoCycle
-    
-    -- Trừ 1 giây để quét sớm hơn, bù đắp độ trễ script/network
-    remaining = remaining - 1
-    if remaining <= 0 then remaining = 300 end
-    
-    return remaining
-end
-
--------------------------------------------------------------------------------
--- VÒNG LẶP CHÍNH — THEO CHU KỲ RESTOCK UTC 5 PHÚT
+-- COUNTDOWN (cập nhật mỗi giây)
 -------------------------------------------------------------------------------
 task.spawn(function()
-    -- Tính thời điểm restock tiếp theo để hiển thị
-    local function nextRestockUTC()
-        local t = os.date("!*t")
-        local nextMin = (math.floor(t.min / 5) + 1) * 5
-        if nextMin >= 60 then nextMin = nextMin - 60 end
-        return string.format("UTC %02d:%02d:00", nextMin >= t.min and t.hour or (t.hour + 1) % 24, nextMin)
-    end
-    
-    print("[GHZ Script] 🚀 Bắt đầu trình lấy data (Timing-Sync Build 1.5)")
-    print("[GHZ Script] 🕐 Mốc restock tiếp theo: " .. nextRestockUTC())
-    
-    -- Quét ngay lần đầu
-    postDataToAPI()
-    
     while true do
-        local waitTime = getSecondsUntilNextRestock()
-        
-        print(string.format("[GHZ Script] ⏳ Đợi %ds đến mốc restock kế tiếp...", waitTime))
-        
-        -- Đếm ngược, cập nhật UI mỗi giây
-        for i = waitTime, 1, -1 do
-            local mins = math.floor(i / 60)
-            local secs = i % 60
-            updateUI(
-                string.format("Status: ⏳ Restock trong %02d:%02d", mins, secs),
-                string.format("Mốc UTC tiếp: %s", nextRestockUTC()),
-                Color3.fromRGB(180, 180, 255)
-            )
-            task.wait(1)
-            if not screenGui or not screenGui.Parent then return end
-        end
-        
-        postDataToAPI()
+        local t    = os.date("!*t")
+        local sec  = (t.min % 5) * 60 + t.sec
+        local left = 300 - sec
+        if left <= 0 then left = 300 end
+        setCountdown(left)
+        task.wait(1)
     end
 end)
+
+-------------------------------------------------------------------------------
+-- READY
+-------------------------------------------------------------------------------
+updateUI("🟢 Đang chờ restock...", nil, nil, nil, nil, nil)
+print("[GHZ Bot] 🚀 Garden Horizons Stock Bot đã khởi động!")
+print("[GHZ Bot] 📡 API URL : " .. Config["API_URL"])
+print("[GHZ Bot] 💬 Webhook : " .. (Config["Webhook_Enabled"] and Config["Webhook_URL"] or "OFF"))
+
