@@ -5,7 +5,7 @@ type table = {
 _G.Configuration = {
 	--// Reporting
 	["Enabled"] = true,
-	["Webhook"] = "https://discord.com/api/webhooks/1482391815024803963/6V8VLwhL7X1o9FL_n1GNxxsoRH6su1tDzhbxzT4wJe_qr_MGCVaqp1fUs8ZKdnbyyC_H", -- THAY BẰNG WEBHOOK CỦA BẠN
+	["Webhook"] = "https://discord.com/api/webhooks/1482391815024803963/6V8VLwhL7X1o9FL_n1GNxxsoRH6su1tDzhbxzT4wJe_qr_MGCVaqp1fUs8ZKdnbyyC_H", 
 	["Weather Reporting"] = true,
 	
 	--// User
