@@ -1,7 +1,7 @@
 _G.Configuration = {
 	["Enabled"] = true,
-	["ApiEndpoint"] = "http://localhost:3456/api/gag",
-	["Webhook"] = "https://discord.com/api/webhooks/YOUR_WEBHOOK_URL_HERE",
+	["ApiEndpoint"] = "https://zenithghz.qzz.io/api/gag",
+	["Webhook"] = "https://discord.com/api/webhooks/1482391815024803963/6V8VLwhL7X1o9FL_n1GNxxsoRH6su1tDzhbxzT4wJe_qr_MGCVaqp1fUs8ZKdnbyyC_H",
 	["Weather Reporting"] = true,
 	["Anti-AFK"] = true,
 	["Auto-Reconnect"] = true,
