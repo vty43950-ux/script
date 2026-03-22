@@ -248,7 +248,7 @@ local function WebhookSend(Type, Fields)
 		embeds = {{
 			color = ConvertColor3(Layout.EmbedColor),
 			fields = Fields,
-			footer = { text = "Create By Zenith | Synced by Zenith API" },
+			footer = { text = "Create By Zenith." },
 			timestamp = DateTime.now():ToIsoDate()
 		}}
 	}
