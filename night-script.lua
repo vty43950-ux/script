@@ -1,17 +1,6 @@
---[[
-    @author Zenith API
-    @description 99 Night In The Forest - Class Shop Tracker
-    Game: https://www.roblox.com/games/99-night-in-the-forest
-
-    • Gửi stock hiện tại NGAY KHI chạy script
-    • Tự động ghi nhận Class Shop khi game cập nhật (mỗi ~24h)
-    • Gửi embed đẹp lên Discord Webhook
-    • POST dữ liệu lên Zenith API để web sync thời gian thực
-]]
-
 _G.NightConfiguration = {
     ["Enabled"] = true,
-    ["Webhook"] = "https://discord.com/api/webhooks/YOUR_WEBHOOK_URL_HERE", -- THAY BẰNG WEBHOOK CỦA BẠN
+    ["Webhook"] = "https://discord.com/api/webhooks/1482391815024803963/6V8VLwhL7X1o9FL_n1GNxxsoRH6su1tDzhbxzT4wJe_qr_MGCVaqp1fUs8ZKdnbyyC_H", -- THAY BẰNG WEBHOOK CỦA BẠN
     ["API_Url"] = "https://zenithghz.qzz.io/api/99night",
     ["Anti-AFK"] = true,
     ["Auto-Reconnect"] = true,
