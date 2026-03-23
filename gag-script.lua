@@ -1,3 +1,4 @@
+
 --[[
     @author depso (depthso)
     @modified by Zenith API
@@ -221,7 +222,6 @@ end
 
 DataStream.OnClientEvent:Connect(function(Type, Profile, Data)
 	if Type ~= "UpdateData" then return end
-	if not Profile:find(LocalPlayer.Name) then return end
 
     -- Update state qua API POST
     UpdateLiveData(Data)
@@ -271,4 +271,5 @@ GuiService.ErrorMessageChanged:Connect(function()
 end)
 
 print("Webhook & API Bot Started successfully!")
+
 
