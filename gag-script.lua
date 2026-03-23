@@ -1,4 +1,5 @@
 
+gag-script.lua
 --[[
     @author depso (depthso)
     @modified by Zenith API
@@ -149,38 +150,15 @@ local function GetDataPacket(Data, Target)
 	return nil
 end
 
-local function SmartFindKey(Data, keyword, fallback)
-    for _, Packet in Data do
-        if type(Packet[1]) == "string" and string.find(string.lower(Packet[1]), keyword) then
-            return Packet[1]
-        end
-    end
-    return fallback
-end
-
-local function AutoDiscoverKeys(Data)
-    -- Discover dynamically in case the developer changes paths
-    local seedKey = SmartFindKey(Data, "seed", "ROOT/SeedStock/Stocks")
-    local gearKey = SmartFindKey(Data, "gear", "ROOT/GearStock/Stocks")
-    local eventKey = SmartFindKey(Data, "event", "ROOT/EventShopStock/Stocks")
-    local eggKey = SmartFindKey(Data, "egg", "ROOT/PetEggStock/Stocks")
-    local cosKey = SmartFindKey(Data, "cosmetic", "ROOT/CosmeticStock/ItemStocks")
-
-    return {
-        [seedKey] = "seeds",
-        [gearKey] = "gear",
-        [eventKey] = "events",
-        [eggKey] = "eggs",
-        [cosKey] = "cosmetics"
-    }, {
-        ["SeedsAndGears"] = { [seedKey] = "SEEDS STOCK", [gearKey] = "GEAR STOCK" },
-        ["EventShop"] = { [eventKey] = "EVENT STOCK" },
-        ["Eggs"] = { [eggKey] = "EGG STOCK" },
-        ["CosmeticStock"] = { [cosKey] = "COSMETIC ITEMS STOCK" }
+local function UpdateLiveData(Data)
+    local mapping = {
+        ["ROOT/SeedStock/Stocks"] = "seeds",
+        ["ROOT/GearStock/Stocks"] = "gear",
+        ["ROOT/EventShopStock/Stocks"] = "events",
+        ["ROOT/PetEggStock/Stocks"] = "eggs",
+        ["ROOT/CosmeticStock/ItemStocks"] = "cosmetics"
     }
-end
 
-local function UpdateLiveData(Data, Mapping)
     local updated = false
     local partialPayload = {}
     
@@ -189,9 +167,9 @@ local function UpdateLiveData(Data, Mapping)
     for _, Packet in Data do table.insert(keys, Packet[1]) end
     partialPayload["_debug_keys"] = keys
 
-    for PacketKey, liveDataKey in Mapping do
+    for PacketKey, liveDataKey in mapping do
         local Stock = GetDataPacket(Data, PacketKey)
-        if Stock then
+        if Stock and type(Stock) == "table" then
             local arr = {}
             for Name, D in Stock do
                 local ActualName = D.EggName or D.ItemName or D.Name or Name
@@ -209,14 +187,14 @@ local function UpdateLiveData(Data, Mapping)
     end
 end
 
-local function ProcessPacket(Data, Type, Layout, LayoutMap)
+local function ProcessPacket(Data, Type, Layout)
 	local Fields = {}
-	local FieldsLayout = LayoutMap[Type]
+	local FieldsLayout = Layout.Layout
 	if not FieldsLayout then return end
 	
 	for Packet, Title in FieldsLayout do 
 		local Stock = GetDataPacket(Data, Packet)
-		if Stock then
+		if Stock and type(Stock) == "table" then
             local String = ""
             for Name, D in Stock do 
                 local ActualName = D.EggName or D.ItemName or D.Name or Name
@@ -245,13 +223,11 @@ end
 DataStream.OnClientEvent:Connect(function(Type, Profile, Data)
 	if Type ~= "UpdateData" then return end
 
-    local mapping, layoutMap = AutoDiscoverKeys(Data)
-
     -- Update state qua API POST
-    UpdateLiveData(Data, mapping)
+    UpdateLiveData(Data)
 
 	for Name, Layout in _G.Configuration["AlertLayouts"] do
-		ProcessPacket(Data, Name, Layout, layoutMap)
+		ProcessPacket(Data, Name, Layout)
 	end
 
     CommitWebhooks()
@@ -293,4 +269,3 @@ GuiService.ErrorMessageChanged:Connect(function()
 end)
 
 print("Zenith Webhook & API Bot Started successfully! (Auto-Discovery enabled)")
-
