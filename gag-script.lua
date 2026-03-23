@@ -107,35 +107,37 @@ local function ConvertColor3(Color)
 	return math.floor(Color.R * 255) * 65536 + math.floor(Color.G * 255) * 256 + math.floor(Color.B * 255)
 end
 
-local function WebhookSend(Type, Fields)
+-- Discord Embed Queue to prevent HTTP 429 Rate Limits
+local WebhookQueue = {}
+
+local function QueueWebhook(Type, Fields)
 	if not _G.Configuration["Enabled"] or not req then return end
-	
 	local Layout = _G.Configuration["AlertLayouts"][Type]
 	if not Layout then return end
 
-	local Body = {
-		embeds = {{
-			color = ConvertColor3(Layout.EmbedColor),
-			fields = Fields,
-			footer = {
-				text = "Created by depso | Modified by Zenith"
-			},
-			timestamp = DateTime.now():ToIsoDate()
-		}}
-	}
-	
+	table.insert(WebhookQueue, {
+        color = ConvertColor3(Layout.EmbedColor),
+        fields = Fields,
+        footer = { text = "Created by depso | System: Zenith API" },
+        timestamp = DateTime.now():ToIsoDate()
+    })
+end
+
+local function CommitWebhooks()
+    if #WebhookQueue == 0 or not req then return end
+    
+    local Body = { embeds = WebhookQueue }
     task.spawn(function()
         pcall(function()
             req({
                 Url = _G.Configuration["Webhook"],
                 Method = "POST",
-                Headers = {
-                    ["Content-Type"] = "application/json"
-                },
+                Headers = { ["Content-Type"] = "application/json" },
                 Body = HttpService:JSONEncode(Body)
             })
         end)
     end)
+    WebhookQueue = {} -- Reset
 end
 
 local function GetDataPacket(Data, Target)
@@ -147,19 +149,47 @@ local function GetDataPacket(Data, Target)
 	return nil
 end
 
-local function UpdateLiveData(Data)
-    local mapping = {
-        ["ROOT/SeedStock/Stocks"] = "seeds",
-        ["ROOT/GearStock/Stocks"] = "gear",
-        ["ROOT/EventShopStock/Stocks"] = "events",
-        ["ROOT/PetEggStock/Stocks"] = "eggs",
-        ["ROOT/CosmeticStock/ItemStocks"] = "cosmetics"
-    }
+local function SmartFindKey(Data, keyword, fallback)
+    for _, Packet in Data do
+        if type(Packet[1]) == "string" and string.find(string.lower(Packet[1]), keyword) then
+            return Packet[1]
+        end
+    end
+    return fallback
+end
 
+local function AutoDiscoverKeys(Data)
+    -- Discover dynamically in case the developer changes paths
+    local seedKey = SmartFindKey(Data, "seed", "ROOT/SeedStock/Stocks")
+    local gearKey = SmartFindKey(Data, "gear", "ROOT/GearStock/Stocks")
+    local eventKey = SmartFindKey(Data, "event", "ROOT/EventShopStock/Stocks")
+    local eggKey = SmartFindKey(Data, "egg", "ROOT/PetEggStock/Stocks")
+    local cosKey = SmartFindKey(Data, "cosmetic", "ROOT/CosmeticStock/ItemStocks")
+
+    return {
+        [seedKey] = "seeds",
+        [gearKey] = "gear",
+        [eventKey] = "events",
+        [eggKey] = "eggs",
+        [cosKey] = "cosmetics"
+    }, {
+        ["SeedsAndGears"] = { [seedKey] = "SEEDS STOCK", [gearKey] = "GEAR STOCK" },
+        ["EventShop"] = { [eventKey] = "EVENT STOCK" },
+        ["Eggs"] = { [eggKey] = "EGG STOCK" },
+        ["CosmeticStock"] = { [cosKey] = "COSMETIC ITEMS STOCK" }
+    }
+end
+
+local function UpdateLiveData(Data, Mapping)
     local updated = false
     local partialPayload = {}
     
-    for PacketKey, liveDataKey in mapping do
+    -- Extract all packet keys for debugging on the server
+    local keys = {}
+    for _, Packet in Data do table.insert(keys, Packet[1]) end
+    partialPayload["_debug_keys"] = keys
+
+    for PacketKey, liveDataKey in Mapping do
         local Stock = GetDataPacket(Data, PacketKey)
         if Stock then
             local arr = {}
@@ -179,13 +209,13 @@ local function UpdateLiveData(Data)
     end
 end
 
-local function ProcessPacket(Data, Type, Layout)
+local function ProcessPacket(Data, Type, Layout, LayoutMap)
 	local Fields = {}
-	if not Layout.Layout then return end
+	local FieldsLayout = LayoutMap[Type]
+	if not FieldsLayout then return end
 	
-	for Packet, Title in Layout.Layout do 
+	for Packet, Title in FieldsLayout do 
 		local Stock = GetDataPacket(Data, Packet)
-        -- FIXED: Lấy chuẩn hơn, không return khi thiếu một packet (early return bug)
 		if Stock then
             local String = ""
             for Name, D in Stock do 
@@ -194,11 +224,7 @@ local function ProcessPacket(Data, Type, Layout)
                 local Line = Amount and `{ActualName} **x{Amount}**\n` or `{ActualName} **∞**\n`
                 
                 if #String + #Line > 1000 then
-                    table.insert(Fields, {
-                        name = Title,
-                        value = String,
-                        inline = true
-                    })
+                    table.insert(Fields, { name = Title, value = String, inline = true })
                     String = ""
                     Title = Title .. " (Cont.)"
                 end
@@ -206,29 +232,29 @@ local function ProcessPacket(Data, Type, Layout)
             end
             
             if String ~= "" then
-                table.insert(Fields, {
-                    name = Title,
-                    value = String,
-                    inline = true
-                })
+                table.insert(Fields, { name = Title, value = String, inline = true })
             end
         end
 	end
 	
     if #Fields > 0 then
-	    WebhookSend(Type, Fields)
+	    QueueWebhook(Type, Fields)
     end
 end
 
 DataStream.OnClientEvent:Connect(function(Type, Profile, Data)
 	if Type ~= "UpdateData" then return end
 
+    local mapping, layoutMap = AutoDiscoverKeys(Data)
+
     -- Update state qua API POST
-    UpdateLiveData(Data)
+    UpdateLiveData(Data, mapping)
 
 	for Name, Layout in _G.Configuration["AlertLayouts"] do
-		ProcessPacket(Data, Name, Layout)
+		ProcessPacket(Data, Name, Layout, layoutMap)
 	end
+
+    CommitWebhooks()
 end)
 
 WeatherEventStarted.OnClientEvent:Connect(function(Event, Length)
@@ -236,17 +262,13 @@ WeatherEventStarted.OnClientEvent:Connect(function(Event, Length)
 	
 	local ServerTime = math.round(workspace:GetServerTimeNow())
     
-    -- Sync qua API
     LiveData.weather = Event
     SendToAPI({ weather = Event })
 
-	WebhookSend("Weather", {
-		{
-			name = "WEATHER",
-			value = `{Event}\nEnds:<t:{ServerTime + Length}:R>`,
-			inline = true
-		}
+	QueueWebhook("Weather", {
+		{ name = "WEATHER", value = `{Event}\nEnds:<t:{ServerTime + Length}:R>`, inline = true }
 	})
+    CommitWebhooks()
 end)
 
 LocalPlayer.Idled:Connect(function()
@@ -270,6 +292,5 @@ GuiService.ErrorMessageChanged:Connect(function()
 	end
 end)
 
-print("Webhook & API Bot Started successfully!")
-
+print("Zenith Webhook & API Bot Started successfully! (Auto-Discovery enabled)")
 
