@@ -1,6 +1,6 @@
 --[[
     @author Zenith
-    @description Grow a Garden stock bot script v2.6.1 - REMOTE ERROR FIX
+    @description Grow a Garden stock bot script v2.7 - FINAL FIX (Time & Data)
     https://www.roblox.com/games/126884695634066
 ]]
 
@@ -42,9 +42,9 @@ _G.Configuration = {
 	["Anti-AFK"] = true,
 	["Auto-Reconnect"] = true,
 	["Rendering Enabled"] = true,
-    ["CosmeticOffset"] = 3600, 
+    ["CosmeticOffset"] = -3600, -- Lùi 1h để khớp mốc restock UTC 1, 5, 9... (Tương đương 00, 04, 08 VN)
 
-    -- Mapping Table
+    -- Mapping Table (Ensured correct internal paths)
 	["Mappings"] = {
 		["ROOT/SeedStock/Stocks"] = "SEEDS STOCK",
 		["ROOT/GearStock/Stocks"] = "GEAR STOCK",
@@ -56,7 +56,7 @@ _G.Configuration = {
 
 -- UI Creation
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "ZenithGAG_V2_6"
+ScreenGui.Name = "ZenithGAG_V2_7"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
@@ -78,7 +78,7 @@ Title.BackgroundTransparency = 1
 Title.Position = UDim2.new(0.05, 0, 0.05, 0)
 Title.Size = UDim2.new(0.9, 0, 0.15, 0)
 Title.Font = Enum.Font.GothamBold
-Title.Text = "ZENITH • HUB V2.6.1"
+Title.Text = "ZENITH • HUB V2.7 FIX"
 Title.TextColor3 = Color3.fromRGB(255, 255, 255)
 Title.TextSize = 16
 Title.TextXAlignment = Enum.TextXAlignment.Left
@@ -88,7 +88,7 @@ TimerLabel.BackgroundTransparency = 1
 TimerLabel.Position = UDim2.new(0.05, 0, 0.25, 0)
 TimerLabel.Size = UDim2.new(0.9, 0, 0.6, 0)
 TimerLabel.Font = Enum.Font.GothamMedium
-TimerLabel.Text = "Waiting for game remotes..."
+TimerLabel.Text = "Waiting for game data..."
 TimerLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
 TimerLabel.TextSize = 13
 TimerLabel.RichText = true
@@ -126,31 +126,44 @@ local function SafeRequest(url, body)
     end)
 end
 
--- Debounce
+-- Global Storage
 local GlobalBuffer = {}
 local CosmeticBuffer = {}
 local DebounceActive = false
+local LastUpdate = 0
 
 local function ProcessAndSend()
     local success, err = pcall(function()
         local MainFields = {}
-        for Packet, TitleText in _G.Configuration.Mappings do
-            if Packet == "ROOT/CosmeticStock/ItemStocks" then continue end
+        -- Sort keys to ensure consistent order (Seeds FIRST, then Gears, Eggs, Event)
+        local order = {
+            "ROOT/SeedStock/Stocks", 
+            "ROOT/GearStock/Stocks", 
+            "ROOT/PetEggStock/Stocks", 
+            "ROOT/EventShopStock/Stocks"
+        }
+
+        for _, Packet in order do
             local Content = GlobalBuffer[Packet]
+            local TitleText = _G.Configuration.Mappings[Packet]
             if Content then
                 local s = ""
+                local count = 0
                 for k, v in Content do
                     s ..= string.format("`•` %s: **x%d**\n", v.EggName or k, v.Stock)
+                    count += 1
                 end
-                if s ~= "" then table.insert(MainFields, { name = "⭐ " .. TitleText, value = s, inline = true }) end
+                if s ~= "" then 
+                    table.insert(MainFields, { name = "⭐ " .. TitleText, value = s, inline = true }) 
+                end
             end
         end
         
         if #MainFields > 0 then
             SafeRequest(_G.Configuration.MainWebhook, {
                 embeds = {{
-                    title = "🛒 GLOBAL STOCK UPDATE", color = 0x38EE17,
-                    fields = MainFields, footer = { text = "Powered by Zenith" },
+                    title = "🛒 ZENITH GAG GLOBAL ROLLUP", color = 0x38EE17,
+                    fields = MainFields, footer = { text = "Powered by Zenith • Optimized v2.7" },
                     timestamp = DateTime.now():ToIsoDate()
                 }}
             })
@@ -165,7 +178,7 @@ local function ProcessAndSend()
             if s ~= "" then
                 local body = {
                     embeds = {{
-                        title = "✨ COSMETIC STOCK UPDATE", color = 0xFF6A2A,
+                        title = "✨ ZENITH COSMETIC STOCK", color = 0xFF6A2A,
                         fields = {{ name = "COSMETIC ITEMS STOCK", value = s, inline = true }},
                         footer = { text = "Powered by Zenith" },
                         timestamp = DateTime.now():ToIsoDate()
@@ -187,6 +200,7 @@ end
 task.spawn(function()
     while task.wait(1) do
         local now = os.time()
+        -- Tính toán lùi 1h để khớp mốc restock UTC 1, 5, 9...
         local baseTime = now + (_G.Configuration.CosmeticOffset or 0)
         local d = os.date("!*t", baseTime)
         local sInDay = (d.hour * 3600) + (d.min * 60) + d.sec
@@ -205,10 +219,7 @@ end)
 
 -- SAFE REMOTES
 local function GetRemote(parent, name)
-    local remote = parent:WaitForChild(name, 10)
-    if not remote then 
-        warn("Zenith: Could NOT find Remote '" .. name .. "'. Please wait or restart script.")
-    end
+    local remote = parent:WaitForChild(name, 15)
     return remote
 end
 
@@ -221,6 +232,7 @@ if GameEvents then
         DataStream.OnClientEvent:Connect(function(Type, Profile, Data)
             if Type ~= "UpdateData" or not Profile:find(LocalPlayer.Name) then return end
 
+            local foundNew = false
             for _, p in Data do
                 local packName = p[1]
                 local content = p[2]
@@ -231,12 +243,15 @@ if GameEvents then
                     else
                         GlobalBuffer[packName] = content
                     end
+                    foundNew = true
                 end
             end
 
-            if not DebounceActive then
-                DebounceActive = true
-                task.delay(1.5, ProcessAndSend)
+            if foundNew then
+                if not DebounceActive then
+                    DebounceActive = true
+                    task.delay(2.0, ProcessAndSend) -- Tăng lên 2s để đảm bảo gom đủ Seed/Event rải rác
+                end
             end
         end)
     end
@@ -246,7 +261,7 @@ if GameEvents then
             if not _G.Configuration["Weather Reporting"] then return end
             local body = {
                 embeds = {{
-                    title = "🌩️ STRANGE WEATHER DETECTED", color = 0x2A6DFF,
+                    title = "🌩️ ZENITH WEATHER ALERT", color = 0x2A6DFF,
                     fields = {
                         { name = "Current Weather", value = string.format("**%s**", Event), inline = true },
                         { name = "Duration", value = string.format("Ends: <t:%d:R>", os.time() + Length), inline = true }
@@ -264,4 +279,4 @@ RunService:Set3dRenderingEnabled(_G.Configuration["Rendering Enabled"])
 LocalPlayer.Idled:Connect(function()
     if _G.Configuration["Anti-AFK"] then VirtualUser:CaptureController() VirtualUser:ClickButton2(Vector2.new()) end
 end)
-print("Zenith v2.6.1 Stable Loaded.")
+print("Zenith v2.7 Final Fix Loaded.")
