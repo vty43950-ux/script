@@ -1,9 +1,6 @@
-
-gag-script.lua
 --[[
     @author depso (depthso)
-    @modified by Zenith API
-    @description Grow a Garden stock bot script (Discord Webhook and API Sync)
+    @description Grow a Garden stock bot script
     https://www.roblox.com/games/126884695634066
 ]]
 
@@ -14,8 +11,7 @@ type table = {
 _G.Configuration = {
 	--// Reporting
 	["Enabled"] = true,
-	["Webhook"] = "https://discord.com/api/webhooks/1482391815024803963/6V8VLwhL7X1o9FL_n1GNxxsoRH6su1tDzhbxzT4wJe_qr_MGCVaqp1fUs8ZKdnbyyC_H", -- THAY BẰNG WEBHOOK CỦA BẠN
-	["API_Url"] = "https://zenithghz.qzz.io/api/gag", -- Mở POST lên API
+	["Webhook"] = "https://discord.com/api/webhooks/1482391815024803963/6V8VLwhL7X1o9FL_n1GNxxsoRH6su1tDzhbxzT4wJe_qr_MGCVaqp1fUs8ZKdnbyyC_H.....", -- replace with your webhook url
 	["Weather Reporting"] = true,
 	
 	--// User
@@ -56,216 +52,185 @@ _G.Configuration = {
 	}
 }
 
+--// Services
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
 local VirtualUser = cloneref(game:GetService("VirtualUser"))
 local RunService = game:GetService("RunService")
 local GuiService = game:GetService("GuiService")
-local TeleportService = game:GetService("TeleportService")
 
-local DataStream = ReplicatedStorage.GameEvents.DataStream
-local WeatherEventStarted = ReplicatedStorage.GameEvents.WeatherEventStarted
+--// Remotes
+local DataStream = ReplicatedStorage.GameEvents.DataStream -- RemoteEvent 
+local WeatherEventStarted = ReplicatedStorage.GameEvents.WeatherEventStarted -- RemoteEvent 
 
 local LocalPlayer = Players.LocalPlayer
 local PlaceId = game.PlaceId
 local JobId = game.JobId
 
+local function GetConfigValue(Key: string)
+	return _G.Configuration[Key]
+end
+
+--// Set rendering enabled
+local Rendering = GetConfigValue("Rendering Enabled")
+RunService:Set3dRenderingEnabled(Rendering)
+
+--// Check if the script is already running
 if _G.StockBot then return end 
 _G.StockBot = true
 
-RunService:Set3dRenderingEnabled(_G.Configuration["Rendering Enabled"])
-
-local req = (request or syn and syn.request or http and http.request)
-
--- Lấy chuẩn hơn State qua API
-local LiveData = {
-    seeds = {},
-    gear = {},
-    events = {},
-    eggs = {},
-    cosmetics = {},
-    weather = "Clear"
-}
-
-local function SendToAPI(Payload)
-    if not _G.Configuration["API_Url"] or _G.Configuration["API_Url"] == "" then return end
-    task.spawn(function()
-        pcall(function()
-            req({
-                Url = _G.Configuration["API_Url"],
-                Method = "POST",
-                Headers = {
-                    ["Content-Type"] = "application/json"
-                },
-                Body = HttpService:JSONEncode(Payload)
-            })
-        end)
-    end)
+local function ConvertColor3(Color: Color3): number
+	local Hex = Color:ToHex()
+	return tonumber(Hex, 16)
 end
 
-local function ConvertColor3(Color)
-	return math.floor(Color.R * 255) * 65536 + math.floor(Color.G * 255) * 256 + math.floor(Color.B * 255)
-end
-
--- Discord Embed Queue to prevent HTTP 429 Rate Limits
-local WebhookQueue = {}
-
-local function QueueWebhook(Type, Fields)
-	if not _G.Configuration["Enabled"] or not req then return end
-	local Layout = _G.Configuration["AlertLayouts"][Type]
-	if not Layout then return end
-
-	table.insert(WebhookQueue, {
-        color = ConvertColor3(Layout.EmbedColor),
-        fields = Fields,
-        footer = { text = "Created by depso | System: Zenith API" },
-        timestamp = DateTime.now():ToIsoDate()
-    })
-end
-
-local function CommitWebhooks()
-    if #WebhookQueue == 0 or not req then return end
-    
-    local Body = { embeds = WebhookQueue }
-    task.spawn(function()
-        pcall(function()
-            req({
-                Url = _G.Configuration["Webhook"],
-                Method = "POST",
-                Headers = { ["Content-Type"] = "application/json" },
-                Body = HttpService:JSONEncode(Body)
-            })
-        end)
-    end)
-    WebhookQueue = {} -- Reset
-end
-
-local function GetDataPacket(Data, Target)
+local function GetDataPacket(Data, Target: string)
 	for _, Packet in Data do
-		if Packet[1] == Target then
-			return Packet[2]
+		local Name = Packet[1]
+		local Content = Packet[2]
+
+		if Name == Target then
+			return Content
 		end
 	end
-	return nil
+
+	return 
 end
 
-local function UpdateLiveData(Data)
-    local mapping = {
-        ["ROOT/SeedStock/Stocks"] = "seeds",
-        ["ROOT/GearStock/Stocks"] = "gear",
-        ["ROOT/EventShopStock/Stocks"] = "events",
-        ["ROOT/PetEggStock/Stocks"] = "eggs",
-        ["ROOT/CosmeticStock/ItemStocks"] = "cosmetics"
+local function GetLayout(Type: string)
+	local Layouts = GetConfigValue("AlertLayouts")
+	return Layouts[Type]
+end
+
+local function WebhookSend(Type: string, Fields: table)
+	local Enabled = GetConfigValue("Enabled")
+	local Webhook = GetConfigValue("Webhook")
+
+	--// Check if reports are enabled
+	if not Enabled then return end
+
+	local Layout = GetLayout(Type)
+	local Color = ConvertColor3(Layout.EmbedColor)
+
+	--// Webhook data
+	local TimeStamp = DateTime.now():ToIsoDate()
+	local Body = {
+		embeds = {
+			{
+				color = Color,
+				fields = Fields,
+				footer = {
+					text = "Created by depso" -- Please keep
+				},
+				timestamp = TimeStamp
+			}
+		}
+	}
+
+	local RequestData = {
+        Url = Webhook,
+        Method = "POST",
+        Headers = {
+            ["Content-Type"] = "application/json"
+        },
+        Body = HttpService:JSONEncode(Body)
     }
 
-    local updated = false
-    local partialPayload = {}
-    
-    -- Extract all packet keys for debugging on the server
-    local keys = {}
-    for _, Packet in Data do table.insert(keys, Packet[1]) end
-    partialPayload["_debug_keys"] = keys
-
-    for PacketKey, liveDataKey in mapping do
-        local Stock = GetDataPacket(Data, PacketKey)
-        if Stock and type(Stock) == "table" then
-            local arr = {}
-            for Name, D in Stock do
-                local ActualName = D.EggName or D.ItemName or D.Name or Name
-                local Qty = D.Stock or D.Quantity or D.Amount
-                table.insert(arr, { name = ActualName, quantity = Qty })
-            end
-            LiveData[liveDataKey] = arr
-            partialPayload[liveDataKey] = arr
-            updated = true
-        end
-    end
-    
-    if updated then
-        SendToAPI(partialPayload)
-    end
+	--// Send POST request to the webhook
+	task.spawn(request, RequestData)
 end
 
-local function ProcessPacket(Data, Type, Layout)
+local function MakeStockString(Stock: table): string
+	local String = ""
+	for Name, Data in Stock do 
+		local Amount = Data.Stock
+		local EggName = Data.EggName 
+
+		Name = EggName or Name
+		String ..= `{Name} **x{Amount}**\n`
+	end
+
+	return String
+end
+
+local function ProcessPacket(Data, Type: string, Layout)
 	local Fields = {}
+	
 	local FieldsLayout = Layout.Layout
 	if not FieldsLayout then return end
-	
+
 	for Packet, Title in FieldsLayout do 
 		local Stock = GetDataPacket(Data, Packet)
-		if Stock and type(Stock) == "table" then
-            local String = ""
-            for Name, D in Stock do 
-                local ActualName = D.EggName or D.ItemName or D.Name or Name
-                local Amount = D.Stock or D.Quantity or D.Amount
-                local Line = Amount and `{ActualName} **x{Amount}**\n` or `{ActualName} **∞**\n`
-                
-                if #String + #Line > 1000 then
-                    table.insert(Fields, { name = Title, value = String, inline = true })
-                    String = ""
-                    Title = Title .. " (Cont.)"
-                end
-                String ..= Line
-            end
-            
-            if String ~= "" then
-                table.insert(Fields, { name = Title, value = String, inline = true })
-            end
-        end
+		if not Stock then return end
+
+		local StockString = MakeStockString(Stock)
+		local Field = {
+			name = Title,
+			value = StockString,
+			inline = true
+		}
+
+		table.insert(Fields, Field)
 	end
-	
-    if #Fields > 0 then
-	    QueueWebhook(Type, Fields)
-    end
+
+	WebhookSend(Type, Fields)
 end
 
-DataStream.OnClientEvent:Connect(function(Type, Profile, Data)
+DataStream.OnClientEvent:Connect(function(Type: string, Profile: string, Data: table)
 	if Type ~= "UpdateData" then return end
+	if not Profile:find(LocalPlayer.Name) then return end
 
-    -- Update state qua API POST
-    UpdateLiveData(Data)
-
-	for Name, Layout in _G.Configuration["AlertLayouts"] do
+	local Layouts = GetConfigValue("AlertLayouts")
+	for Name, Layout in Layouts do
 		ProcessPacket(Data, Name, Layout)
 	end
-
-    CommitWebhooks()
 end)
 
-WeatherEventStarted.OnClientEvent:Connect(function(Event, Length)
-	if not _G.Configuration["Weather Reporting"] then return end
-	
+WeatherEventStarted.OnClientEvent:Connect(function(Event: string, Length: number)
+	--// Check if Weather reports are enabled
+	local WeatherReporting = GetConfigValue("Weather Reporting")
+	if not WeatherReporting then return end
+
+	--// Calculate end unix
 	local ServerTime = math.round(workspace:GetServerTimeNow())
-    
-    LiveData.weather = Event
-    SendToAPI({ weather = Event })
+	local EndUnix = ServerTime + Length
 
-	QueueWebhook("Weather", {
-		{ name = "WEATHER", value = `{Event}\nEnds:<t:{ServerTime + Length}:R>`, inline = true }
+	WebhookSend("Weather", {
+		{
+			name = "WEATHER",
+			value = `{Event}\nEnds:<t:{EndUnix}:R>`,
+			inline = true
+		}
 	})
-    CommitWebhooks()
 end)
 
+--// Anti idle
 LocalPlayer.Idled:Connect(function()
-	if _G.Configuration["Anti-AFK"] then
-		VirtualUser:CaptureController()
-		VirtualUser:ClickButton2(Vector2.new())
-	end
+	--// Check if Anti-AFK is enabled
+	local AntiAFK = GetConfigValue("Anti-AFK")
+	if not AntiAFK then return end
+
+	VirtualUser:CaptureController()
+	VirtualUser:ClickButton2(Vector2.new())
 end)
 
+--// Auto reconnect
 GuiService.ErrorMessageChanged:Connect(function()
-	if not _G.Configuration["Auto-Reconnect"] then return end
-    
-    if queue_on_teleport then
-	    queue_on_teleport('loadstring(game:HttpGet("https://raw.githubusercontent.com/depthso/Grow-a-Garden/refs/heads/main/Stock%20bot.lua"))()')
-    end
-    
-	if #Players:GetPlayers() <= 1 then
-		TeleportService:Teleport(PlaceId, LocalPlayer)
-	else
-		TeleportService:TeleportToPlaceInstance(PlaceId, JobId, LocalPlayer)
-	end
-end)
+	local IsSingle = #Players:GetPlayers() <= 1
 
-print("Zenith Webhook & API Bot Started successfully! (Auto-Discovery enabled)")
+	--// Check if Auto-Reconnect is enabled
+	local AutoReconnect = GetConfigValue("Auto-Reconnect")
+	if not AutoReconnect then return end
+
+  --// Execute the script after teleporting
+	queue_on_teleport("https://raw.githubusercontent.com/depthso/Grow-a-Garden/refs/heads/main/Stock%20bot.lua")
+
+	--// Join a different server if the player is solo
+	if IsSingle then
+		TeleportService:Teleport(PlaceId, LocalPlayer)
+		return
+	end
+
+	TeleportService:TeleportToPlaceInstance(PlaceId, JobId, LocalPlayer)
+end)
