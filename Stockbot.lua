@@ -11,13 +11,13 @@ type table = {
 _G.Configuration = {
 	--// Reporting
 	["Enabled"] = true,
-	["Webhook"] = "https://discord.com/api/webhooks.....", -- replace with your webhook url
+	["Webhook"] = "https://discord.com/api/webhooks/1482391815024803963/6V8VLwhL7X1o9FL_n1GNxxsoRH6su1tDzhbxzT4wJe_qr_MGCVaqp1fUs8ZKdnbyyC_H.....", -- replace with your webhook url
 	["Weather Reporting"] = true,
 	
 	--// User
 	["Anti-AFK"] = true,
 	["Auto-Reconnect"] = true,
-	["Rendering Enabled"] = false,
+	["Rendering Enabled"] = true,
 
 	--// Embeds
 	["AlertLayouts"] = {
